@@ -1,0 +1,20 @@
+---
+title: "Untitled"
+author: "Tristan Caro"
+date: "`r Sys.Date()`"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+# Setup
+
+```{r}
+library(tidyverse)
+```
+
+```{r}
+df <- readxl::read_excel("data/preliminary_FID/FID01090_35m_p_20ul-hex.xls")
+
+```
+
