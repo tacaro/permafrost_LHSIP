@@ -1,0 +1,36 @@
+---
+title: "00_GC_Data_Exploration"
+author: "Tristan Caro"
+date: "`r Sys.Date()`"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+
+# Libraries
+
+```{r}
+library(tidyverse)
+```
+
+
+# Load data
+
+```{r}
+results_file_list <- list.files("data/GC_Data/", pattern = ".RES")
+chrom_file_list <- list.files("data/GC_Data/", pattern = ".CHR")
+```
+
+
+```{r}
+test <- read_delim("data/GC_Data/30Sept22FID_TC_21.RES", skip = 35, delim = ",")
+test2_FID <- tibble(
+  col1 = str_split(test$TC[1], pattern = ",", simplify = TRUE),
+  col2 = str_split(test$TC[2], pattern = ",", simplify = TRUE)
+)
+
+test3_FID <- read_file("data/GC_Data/30Sept22FID_TC_21.RES")
+test3_FID_CH4 <- str_subset(test3_FID, 
+```
+
