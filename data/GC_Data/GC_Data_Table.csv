@@ -1,50 +1,50 @@
 ,gas,retention_time,peak_area,peak_height,correction_factor,file_name,sample_type,column,carrier
-0,CH4,3.140,118.3284,15.479,0.0043,data/GC_Data/30Sept22FID_TC_21.RES,0.5mL_NT-Core-Test,2m 2mmID ShinCarbonST 80/100,Argon at 35psi
-1,C02,3.983,957.6394,107.640,0.1226,data/GC_Data/30Sept22FID_TC_21.RES,0.5mL_NT-Core-Test,2m 2mmID ShinCarbonST 80/100,Argon at 35psi
+0,CH4,3.14,118.3284,15.479,0.0043,data/GC_Data/30Sept22FID_TC_21.RES,0.5mL_NT-Core-Test,2m 2mmID ShinCarbonST 80/100,Argon at 35psi
+1,C02,3.983,957.6394,107.64,0.1226,data/GC_Data/30Sept22FID_TC_21.RES,0.5mL_NT-Core-Test,2m 2mmID ShinCarbonST 80/100,Argon at 35psi
 0,CO,2.562,22202.9108,2866.406,0.8496,data/GC_Data/30Sept22FID_TC_09.RES,0.5ml_1pcMix,2m 2mmID ShinCarbonST 80/100,Argon at 35psi
-1,CH4,3.119,22263.2650,2720.867,0.8066,data/GC_Data/30Sept22FID_TC_09.RES,0.5ml_1pcMix,2m 2mmID ShinCarbonST 80/100,Argon at 35psi
+1,CH4,3.119,22263.265,2720.867,0.8066,data/GC_Data/30Sept22FID_TC_09.RES,0.5ml_1pcMix,2m 2mmID ShinCarbonST 80/100,Argon at 35psi
 2,C02,3.949,22306.5707,2421.053,2.8568,data/GC_Data/30Sept22FID_TC_09.RES,0.5ml_1pcMix,2m 2mmID ShinCarbonST 80/100,Argon at 35psi
-0,CO,2.590,9679.7069,1502.707,0.3704,data/GC_Data/30Sept22FID_TC_08.RES,1ml_1pcMix,2m 2mmID ShinCarbonST 80/100,Argon at 35psi
-1,CH4,3.148,9653.3670,1358.545,0.3498,data/GC_Data/30Sept22FID_TC_08.RES,1ml_1pcMix,2m 2mmID ShinCarbonST 80/100,Argon at 35psi
-2,C02,3.980,9863.7235,1197.179,1.2632,data/GC_Data/30Sept22FID_TC_08.RES,1ml_1pcMix,2m 2mmID ShinCarbonST 80/100,Argon at 35psi
-0,CH4,3.160,1404.2954,163.727,0.0509,data/GC_Data/30Sept22FID_TC_20.RES,0.5mL_NT-Core-Test_Failed,2m 2mmID ShinCarbonST 80/100,Argon at 35psi
+0,CO,2.59,9679.7069,1502.707,0.3704,data/GC_Data/30Sept22FID_TC_08.RES,1ml_1pcMix,2m 2mmID ShinCarbonST 80/100,Argon at 35psi
+1,CH4,3.148,9653.367,1358.545,0.3498,data/GC_Data/30Sept22FID_TC_08.RES,1ml_1pcMix,2m 2mmID ShinCarbonST 80/100,Argon at 35psi
+2,C02,3.98,9863.7235,1197.179,1.2632,data/GC_Data/30Sept22FID_TC_08.RES,1ml_1pcMix,2m 2mmID ShinCarbonST 80/100,Argon at 35psi
+0,CH4,3.16,1404.2954,163.727,0.0509,data/GC_Data/30Sept22FID_TC_20.RES,0.5mL_NT-Core-Test_Failed,2m 2mmID ShinCarbonST 80/100,Argon at 35psi
 1,C02,4.005,11202.5436,1161.963,1.4347,data/GC_Data/30Sept22FID_TC_20.RES,0.5mL_NT-Core-Test_Failed,2m 2mmID ShinCarbonST 80/100,Argon at 35psi
 0,CO,2.587,29047.8412,4915.802,1.1116,data/GC_Data/30Sept22FID_TC_03.RES,Blank,2m 2mmID ShinCarbonST 80/100,Argon at 35psi
 1,CO,2.663,18511.5199,4913.427,0.7084,data/GC_Data/30Sept22FID_TC_03.RES,Blank,2m 2mmID ShinCarbonST 80/100,Argon at 35psi
 2,CH4,3.152,29562.9796,4910.742,1.0711,data/GC_Data/30Sept22FID_TC_03.RES,Blank,2m 2mmID ShinCarbonST 80/100,Argon at 35psi
-3,CH4,3.226,18571.7272,4911.270,0.6729,data/GC_Data/30Sept22FID_TC_03.RES,Blank,2m 2mmID ShinCarbonST 80/100,Argon at 35psi
+3,CH4,3.226,18571.7272,4911.27,0.6729,data/GC_Data/30Sept22FID_TC_03.RES,Blank,2m 2mmID ShinCarbonST 80/100,Argon at 35psi
 4,C02,4.004,25623.0316,4913.352,3.2815,data/GC_Data/30Sept22FID_TC_03.RES,Blank,2m 2mmID ShinCarbonST 80/100,Argon at 35psi
 5,C02,4.057,25146.0126,4913.375,3.2204,data/GC_Data/30Sept22FID_TC_03.RES,Blank,2m 2mmID ShinCarbonST 80/100,Argon at 35psi
 0,CO,2.568,849.8086,51.456,0.0325,data/GC_Data/30Sept22FID_TC_16.RES,1ml_1pcMix,2m 2mmID ShinCarbonST 80/100,Argon at 35psi
-1,CH4,3.185,215.4544,15.140,0.0078,data/GC_Data/30Sept22FID_TC_16.RES,1ml_1pcMix,2m 2mmID ShinCarbonST 80/100,Argon at 35psi
+1,CH4,3.185,215.4544,15.14,0.0078,data/GC_Data/30Sept22FID_TC_16.RES,1ml_1pcMix,2m 2mmID ShinCarbonST 80/100,Argon at 35psi
 2,C02,4.013,5394.5798,520.941,0.6909,data/GC_Data/30Sept22FID_TC_16.RES,1ml_1pcMix,2m 2mmID ShinCarbonST 80/100,Argon at 35psi
 0,CO,2.609,18394.6745,2778.404,0.7039,data/GC_Data/23Sept22FID_TC_05.RES,0.5mL 1% mix,2m 2mmID ShinCarbonST 80/100,Argon at 35psi
-1,CH4,3.170,18450.4819,2566.185,0.6685,data/GC_Data/23Sept22FID_TC_05.RES,0.5mL 1% mix,2m 2mmID ShinCarbonST 80/100,Argon at 35psi
-2,C02,4.013,18225.4922,2194.660,2.3341,data/GC_Data/23Sept22FID_TC_05.RES,0.5mL 1% mix,2m 2mmID ShinCarbonST 80/100,Argon at 35psi
+1,CH4,3.17,18450.4819,2566.185,0.6685,data/GC_Data/23Sept22FID_TC_05.RES,0.5mL 1% mix,2m 2mmID ShinCarbonST 80/100,Argon at 35psi
+2,C02,4.013,18225.4922,2194.66,2.3341,data/GC_Data/23Sept22FID_TC_05.RES,0.5mL 1% mix,2m 2mmID ShinCarbonST 80/100,Argon at 35psi
 0,CO,2.601,45361.8574,4888.295,1.7359,data/GC_Data/30Sept22FID_TC_14.RES,1ml_1pcMix,2m 2mmID ShinCarbonST 80/100,Argon at 35psi
 1,CH4,3.157,45634.4717,4861.606,1.6534,data/GC_Data/30Sept22FID_TC_14.RES,1ml_1pcMix,2m 2mmID ShinCarbonST 80/100,Argon at 35psi
 2,C02,3.985,45874.5214,4415.385,5.8751,data/GC_Data/30Sept22FID_TC_14.RES,1ml_1pcMix,2m 2mmID ShinCarbonST 80/100,Argon at 35psi
 0,CO,2.608,23821.1747,2867.931,0.9116,data/GC_Data/30Sept22FID_TC_05.RES,Blank,2m 2mmID ShinCarbonST 80/100,Argon at 35psi
 1,CH4,3.169,23909.0999,2755.493,0.8663,data/GC_Data/30Sept22FID_TC_05.RES,Blank,2m 2mmID ShinCarbonST 80/100,Argon at 35psi
 2,C02,4.006,23801.6681,2468.028,3.0482,data/GC_Data/30Sept22FID_TC_05.RES,Blank,2m 2mmID ShinCarbonST 80/100,Argon at 35psi
-0,CO,2.586,24049.5384,2921.430,0.9203,data/GC_Data/30Sept22FID_TC_11.RES,0.5ml_1pcMix,2m 2mmID ShinCarbonST 80/100,Argon at 35psi
+0,CO,2.586,24049.5384,2921.43,0.9203,data/GC_Data/30Sept22FID_TC_11.RES,0.5ml_1pcMix,2m 2mmID ShinCarbonST 80/100,Argon at 35psi
 1,CH4,3.144,24120.0191,2802.823,0.8739,data/GC_Data/30Sept22FID_TC_11.RES,0.5ml_1pcMix,2m 2mmID ShinCarbonST 80/100,Argon at 35psi
 2,C02,3.976,24062.7224,2498.463,3.0817,data/GC_Data/30Sept22FID_TC_11.RES,0.5ml_1pcMix,2m 2mmID ShinCarbonST 80/100,Argon at 35psi
 0,CO,2.585,22961.5218,2825.782,0.8787,data/GC_Data/30Sept22FID_TC_10.RES,0.5ml_1pcMix,2m 2mmID ShinCarbonST 80/100,Argon at 35psi
 1,CH4,3.141,23026.5893,2703.949,0.8343,data/GC_Data/30Sept22FID_TC_10.RES,0.5ml_1pcMix,2m 2mmID ShinCarbonST 80/100,Argon at 35psi
 2,C02,3.973,23074.8914,2424.209,2.9552,data/GC_Data/30Sept22FID_TC_10.RES,0.5ml_1pcMix,2m 2mmID ShinCarbonST 80/100,Argon at 35psi
 0,CO,2.602,20860.5598,2661.316,0.7983,data/GC_Data/30Sept22FID_TC_04.RES,Blank,2m 2mmID ShinCarbonST 80/100,Argon at 35psi
-1,CH4,3.164,20937.4650,2530.061,0.7586,data/GC_Data/30Sept22FID_TC_04.RES,Blank,2m 2mmID ShinCarbonST 80/100,Argon at 35psi
+1,CH4,3.164,20937.465,2530.061,0.7586,data/GC_Data/30Sept22FID_TC_04.RES,Blank,2m 2mmID ShinCarbonST 80/100,Argon at 35psi
 2,C02,4.005,20917.3993,2258.671,2.6788,data/GC_Data/30Sept22FID_TC_04.RES,Blank,2m 2mmID ShinCarbonST 80/100,Argon at 35psi
 0,CO,2.593,12269.0625,1772.013,0.4695,data/GC_Data/30Sept22FID_TC_12.RES,0.25ml_1pcMix,2m 2mmID ShinCarbonST 80/100,Argon at 35psi
 1,CH4,3.151,12279.5664,1631.763,0.4449,data/GC_Data/30Sept22FID_TC_12.RES,0.25ml_1pcMix,2m 2mmID ShinCarbonST 80/100,Argon at 35psi
 2,C02,3.985,12305.2613,1414.461,1.5759,data/GC_Data/30Sept22FID_TC_12.RES,0.25ml_1pcMix,2m 2mmID ShinCarbonST 80/100,Argon at 35psi
-0,CO,2.598,23849.0528,2843.230,0.9126,data/GC_Data/30Sept22FID_TC_06.RES,Blank,2m 2mmID ShinCarbonST 80/100,Argon at 35psi
+0,CO,2.598,23849.0528,2843.23,0.9126,data/GC_Data/30Sept22FID_TC_06.RES,Blank,2m 2mmID ShinCarbonST 80/100,Argon at 35psi
 1,CH4,3.157,23922.8183,2739.129,0.8668,data/GC_Data/30Sept22FID_TC_06.RES,Blank,2m 2mmID ShinCarbonST 80/100,Argon at 35psi
 2,C02,3.992,23957.0507,2476.528,3.0681,data/GC_Data/30Sept22FID_TC_06.RES,Blank,2m 2mmID ShinCarbonST 80/100,Argon at 35psi
-0,CO,2.604,47290.7214,4920.760,1.8097,data/GC_Data/30Sept22FID_TC_07.RES,1ml_1pcMix,2m 2mmID ShinCarbonST 80/100,Argon at 35psi
-1,CH4,3.160,47660.8524,4903.696,1.7269,data/GC_Data/30Sept22FID_TC_07.RES,1ml_1pcMix,2m 2mmID ShinCarbonST 80/100,Argon at 35psi
+0,CO,2.604,47290.7214,4920.76,1.8097,data/GC_Data/30Sept22FID_TC_07.RES,1ml_1pcMix,2m 2mmID ShinCarbonST 80/100,Argon at 35psi
+1,CH4,3.16,47660.8524,4903.696,1.7269,data/GC_Data/30Sept22FID_TC_07.RES,1ml_1pcMix,2m 2mmID ShinCarbonST 80/100,Argon at 35psi
 2,C02,3.986,48002.0869,4554.827,6.1475,data/GC_Data/30Sept22FID_TC_07.RES,1ml_1pcMix,2m 2mmID ShinCarbonST 80/100,Argon at 35psi
 0,CO,2.532,5354.5764,835.986,0.2049,data/GC_Data/30Sept22FID_TC_13.RES,0.25ml_1pcMix,2m 2mmID ShinCarbonST 80/100,Argon at 35psi
-1,CH4,3.090,5362.9406,752.337,0.1943,data/GC_Data/30Sept22FID_TC_13.RES,0.25ml_1pcMix,2m 2mmID ShinCarbonST 80/100,Argon at 35psi
+1,CH4,3.09,5362.9406,752.337,0.1943,data/GC_Data/30Sept22FID_TC_13.RES,0.25ml_1pcMix,2m 2mmID ShinCarbonST 80/100,Argon at 35psi
 2,C02,3.925,5397.8998,647.583,0.6913,data/GC_Data/30Sept22FID_TC_13.RES,0.25ml_1pcMix,2m 2mmID ShinCarbonST 80/100,Argon at 35psi
