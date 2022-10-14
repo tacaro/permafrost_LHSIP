@@ -12,25 +12,53 @@ editor_options:
 
 ```{r}
 library(tidyverse)
+library(plotly)
 ```
 
 
 # Load data
 
 ```{r}
-results_file_list <- list.files("data/GC_Data/", pattern = ".RES")
-chrom_file_list <- list.files("data/GC_Data/", pattern = ".CHR")
+gc <- read_csv("data/GC_Data/GC_Data_Table.csv")
 ```
 
+# Explore data
 
 ```{r}
-test <- read_delim("data/GC_Data/30Sept22FID_TC_21.RES", skip = 35, delim = ",")
-test2_FID <- tibble(
-  col1 = str_split(test$TC[1], pattern = ",", simplify = TRUE),
-  col2 = str_split(test$TC[2], pattern = ",", simplify = TRUE)
-)
-
-test3_FID <- read_file("data/GC_Data/30Sept22FID_TC_21.RES")
-test3_FID_CH4 <- str_subset(test3_FID, 
+gc %>% filter(
+  sample_type != "Blank",
+  str_detect(file_name, "30Sept"),
+  str_detect(sample_type, "Failed", negate = TRUE),
+  str_detect(file_name, "TC_13", negate = TRUE),
+  str_detect(file_name, "TC_21", negate = TRUE),
+  str_detect(file_name, "TC_16", negate = TRUE),
+  str_detect(file_name, "TC_08", negate = TRUE)
+  ) %>% 
+  mutate(
+    volume_ml = case_when(
+      sample_type == "0.25ml_1pcMix" ~ 0.25,
+      sample_type == "0.5ml_1pcMix" ~ 0.5,
+      sample_type == "1ml_1pcMix" ~ 1
+        )
+  ) %>% 
+  ggplot(
+    aes(
+      x = volume_ml,
+      y = peak_area,
+      color = gas
+      )
+  ) +
+  geom_point(
+    size = 2,
+    alpha = 0.7
+  ) +
+  geom_smooth(
+    method = "lm",
+    formula = "y~x",
+    se = FALSE,
+    size = 0.5
+  ) +
+  scale_x_continuous(breaks = c(0.25, 0.5, 0.75, 1))
+#plotly::ggplotly()
 ```
 

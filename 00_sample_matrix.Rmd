@@ -1,0 +1,42 @@
+---
+title: "00_Sample_Matrix"
+author: "Tristan Caro"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r}
+library(tidyverse)
+library(devtools)
+install_github("ropensci/baRcodeR", build_opts = c("--no-resave-data", "--no-manual"), build_vignettes = TRUE)
+library(baRcodeR)
+```
+
+```{r}
+sample_matrix <- tribble(
+  ~core, ~temp, ~inc_time_d,
+  "35m", -4, 0,
+  "54m", 0, 7,
+  "83m", 4, 30,
+  "US", 12, 180
+)
+```
+
+```{r}
+sample_matrix_expanded <- sample_matrix %>% 
+  expand(core, temp, inc_time_d) %>% 
+  mutate(
+    labels = paste0("p", core, "(", temp, "C)", inc_time_d, "d")
+    )
+
+sample_labels <- sample_matrix_expanded %>% pull(labels)
+```
+
+
+
+Export 
+```{r}
+create_PDF(Labels = sample_labels, name = "sample_matrix_labels", Fsz = 12)
+sample_matrix_expanded %>% write_csv("data/sample_matrix.csv")
+```
+
