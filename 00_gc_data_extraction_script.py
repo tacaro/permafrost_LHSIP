@@ -61,7 +61,7 @@ def read_GC_RES_file(file_name):
 
 # EXECUTE
 
-GC_file_directory = "data/GC_Data/" # If your GC data is not in a file like this, change this string!
+GC_file_directory = "data/GC_Data/Feb/" # If your GC data is not in a file like this, change this string!
 GC_files = [f for f in os.listdir(GC_file_directory) if f.endswith(".RES") and "FID" in f]
 
 appended_data = []
@@ -74,4 +74,4 @@ for res in GC_files:
 # See pd.concat documentation for more info on this operation
 appended_data = pd.concat(appended_data)
 # write DataFrame to csv
-appended_data.to_csv("data/GC_Data/GC_Data_Table.csv")
+appended_data.to_csv("data/GC_Data_Table.csv")
