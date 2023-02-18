@@ -19,46 +19,297 @@ library(plotly)
 # Load data
 
 ```{r}
-gc <- read_csv("data/GC_Data/GC_Data_Table.csv")
+# Load GC raw data
+gc <- read_csv("data/GC_Data_Table.csv") |> 
+  rename(gc_sample_id = sample_type) |> 
+  # fix mislabeled gas name
+  mutate(
+    gas = case_when(
+      gas == "C02" ~ "CO2",
+      TRUE ~ gas
+    )
+  )
+
+# load sample_matrix metadata
+sample_matrix <- read_csv("data/sample_matrix.csv") |> 
+  # find number of days elapsed at GC timepoint
+  mutate(
+    across(
+      c(inc_start_date, GC_T1, GC_T2, GC_T3, GC_T4, inc_end_date, 
+                saline_Ti, saline_Tf, frozen, decanted),
+      # Define the lambda function ~ where .x is the across variable
+      ~ as.Date(.x, format = "%d-%b-%y"), 
+    )
+  ) |>
+  mutate(
+    dt1 = difftime(GC_T1, inc_start_date, units = "days"),
+    dt2 = difftime(GC_T2, inc_start_date, units = "days"),
+    dt3 = difftime(GC_T3, inc_start_date, units = "days"),
+    dt4 = difftime(GC_T4, inc_start_date, units = "days"),
+  )
+
+# load list of bad gc standards injections
+bad_gc_list <- readxl::read_excel("data/bad_gc_list.xlsx") |> pull(file_name)
 ```
 
-# Explore data
+
+# Data Cleanup
+
+## Separate samples/standards
 
 ```{r}
-gc %>% filter(
-  sample_type != "Blank",
-  str_detect(file_name, "30Sept"),
-  str_detect(sample_type, "Failed", negate = TRUE),
-  str_detect(file_name, "TC_13", negate = TRUE),
-  str_detect(file_name, "TC_21", negate = TRUE),
-  str_detect(file_name, "TC_16", negate = TRUE),
-  str_detect(file_name, "TC_08", negate = TRUE)
-  ) %>% 
+# Create new tibble for just standard runs
+gc_standards <- gc |> 
+  filter(str_detect(gc_sample_id, "mix")) |> 
   mutate(
-    volume_ml = case_when(
-      sample_type == "0.25ml_1pcMix" ~ 0.25,
-      sample_type == "0.5ml_1pcMix" ~ 0.5,
-      sample_type == "1ml_1pcMix" ~ 1
-        )
-  ) %>% 
-  ggplot(
-    aes(
-      x = volume_ml,
-      y = peak_area,
-      color = gas
-      )
-  ) +
-  geom_point(
-    size = 2,
-    alpha = 0.7
-  ) +
-  geom_smooth(
-    method = "lm",
-    formula = "y~x",
-    se = FALSE,
-    size = 0.5
-  ) +
-  scale_x_continuous(breaks = c(0.25, 0.5, 0.75, 1))
-#plotly::ggplotly()
+    sample_volume = str_extract(gc_sample_id, "\\d+(\\.\\d+)?(?=ml)")
+  )
 ```
+
+## Parse text from sample code
+
+```{r}
+  
+# Create new tibble for just sample runs
+gc_samples <- gc |> 
+  # filter for samples where first letter is
+  filter(
+      str_sub(gc_sample_id, 1, 1) == "p"
+    ) |> 
+  mutate(
+    # extract sample volume
+    sample_volume = str_extract(gc_sample_id, "\\d+(\\.\\d+)?(?=ml)"),
+    # extract time point
+    timepoint = str_extract(gc_sample_id, "T[0-9]"),
+    # extract the incubation duration
+    inc_time.d = str_extract(gc_sample_id, "(?<=\\D)\\d{1,3}(?=d)"),
+    # extract the temperature
+    temp = case_when(
+      str_detect(gc_sample_id, "12C") ~ 12,
+      str_detect(gc_sample_id, "-4C") ~ -4,
+      str_detect(gc_sample_id, "4C") ~ 4
+    ),
+    # string version of temp
+    temp.str = str_c(as.character(temp), "C"),
+    # extract the site id
+    site = case_when(
+      str_detect(gc_sample_id, "pUS") ~ "US - 10cm",
+      str_detect(gc_sample_id, "p83") ~ "83m",
+      str_detect(gc_sample_id, "p54") ~ "54m",
+      str_detect(gc_sample_id, "p35") ~ "35m",
+    )
+  ) |> 
+  # clean up samples that I forgot to add timepoint code `T#`
+  mutate(
+    timepoint = case_when(
+      # All samples on 28 and 13 OCT were T1!
+      str_detect(file_name, "28OCT") & is.na(timepoint) ~ "T1",
+      str_detect(file_name, "13OCT") & is.na(timepoint) ~ "T1",
+      TRUE ~ timepoint
+    ),
+    gc_sample_id = case_when(
+      str_detect(file_name, "28OCT") & is.na(timepoint) ~ str_c(gc_sample_id, "_", timepoint),
+      str_detect(file_name, "13OCT") & is.na(timepoint) ~ str_c(gc_sample_id, "_", timepoint),
+      TRUE ~ gc_sample_id
+    )
+  ) |> 
+  # match sample_id for left_join
+  mutate(
+    sample_id = str_extract(gc_sample_id, "^[^_]*"),
+    # fix the sample_ids that were not input correctly
+    sample_id = case_when(
+      gc_sample_id == "p83m(4C)_30d_T4_0.25ml" ~ "p83m(4C)30d",
+      gc_sample_id == "p54m(4C)_30d_T4_0.5ml" ~ "p54m(4C)30d",
+      gc_sample_id == "p83m(12C)_30d_T4_0.25ml" ~ "p83m(12C)30d",
+      gc_sample_id == "p54m(12C)_30d_T4_0.25ml" ~ "p54m(12C)30d",
+      gc_sample_id == "p35m(4C)_30d_T4_0.5ml" ~ "p35m(4C)30d",
+      gc_sample_id == "p35m(12C)_30d_T4_0.25ml" ~ "p35m(12C)30d",
+      gc_sample_id == "p35m(12C)_30d_T4_0.5ml" ~ "p35m(12C)30d",
+      TRUE ~ sample_id
+    )
+  ) |> 
+  # fix sample ids that don't have "m" after the site
+  mutate(
+    sample_id = case_when(
+      str_detect(sample_id, "m", negate = TRUE) & str_detect(sample_id, "US", negate = TRUE) ~ 
+        str_replace_all(sample_id, "(p\\d{2,})", "\\1m"),
+      TRUE ~ sample_id
+    )
+  )
+```
+
+## Join metadata with gc data
+
+```{r}
+small_metadata <- sample_matrix |> 
+  select(sample_id, dt1, dt2, dt3, dt4)
+
+gc_samples_w_dt <- gc_samples |> 
+  left_join(small_metadata, by = "sample_id") |> 
+  # assign the appropriate dt for this gc measurement
+  mutate(
+    dt = case_when(
+      timepoint == "T1" ~ dt1,
+      timepoint == "T2" ~ dt2,
+      timepoint == "T3" ~ dt3,
+      timepoint == "T4" ~ dt4
+    ),
+    dt.d = parse_number(as.character(dt))
+  ) |> 
+  # remove extraneous dt columns
+  select(-c(dt1, dt2, dt3, dt4))
+
+gc_samples_w_dt_mean <- gc_samples_w_dt |> 
+  # take mean value of gc injections
+  group_by(site, temp, inc_time.d, timepoint, sample_id, gas) |> 
+  summarize(
+    .groups = "keep",
+    # keep these columns:
+    peak_area = mean(peak_area, na.rm = TRUE),
+    peak_height = mean(peak_height, na.rm = TRUE),
+    retention_time = mean(retention_time, na.rm = TRUE),
+    correction_factor = mean(correction_factor, na.rm = TRUE),
+    dt.d = mean(dt.d)
+  ) |> 
+  mutate(
+    temp.str = as.factor(str_c(temp, "C")), 
+    temp.str = fct_relevel(temp.str, c("-4C", "4C", "12C"))
+    )
+  
+```
+
+
+# Generate standard curves
+
+```{r}
+gc_standard_curve <- gc_standards |>
+  mutate(
+    date_injected = str_sub(file_name, start = -20, end = -14),
+    date_injected = as.Date(date_injected, format = "%d%b%y"), 
+  ) |>
+  filter(
+    !is.na(sample_volume),
+    !file_name %in% bad_gc_list
+    ) |> 
+  group_by(gas, date_injected)
+
+gc_standard_curve |> 
+  ggplot() +
+  aes(
+    x = as.numeric(sample_volume), 
+    y = peak_area, 
+    color = gas,
+    label = file_name
+    ) +
+  geom_point() +
+  geom_smooth(method = "lm", formula = "y~x") +
+  ggsci::scale_color_igv() +
+  facet_wrap(vars(gas), scales = "free_y") +
+  coord_cartesian(ylim = c(10000, 50000)) +
+  scale_x_continuous(breaks = c(0.25, 0.5, 0.75, 1)) +
+  theme_classic() +
+  labs(
+    color = "Gas",
+    x = "Vol. Injected (mL)",
+    y = "Peak Area"
+  ) +
+  theme(
+    strip.background = element_blank(),
+    legend.position = "bottom"
+  )
+  
+```
+
+
+# Exploratory plots
+
+
+```{r}
+p30dco2 <- gc_samples_w_dt_mean |> 
+  filter(inc_time.d == 30, gas == "CO2") |> 
+  ggplot() +
+  aes(
+    x = dt.d,
+    y = peak_area,
+    color = gas,
+    shape = as.factor(site),
+    group = as.factor(site)
+  ) +
+  geom_point(size = 2, color = "#ffa203") +
+  geom_line(color = "#ffa203") +
+  facet_wrap(vars(temp.str), nrow = 1) +
+  theme_bw() +
+  labs(
+    x = "∆t (days)",
+    y = "Peak Area",
+    title = "CO2"
+  ) +
+  theme(
+    legend.position = "NA"
+  )
+p30dco2
+
+p30dch4 <- gc_samples_w_dt_mean |> 
+  filter(inc_time.d == 30, gas == "CH4") |> 
+  ggplot() +
+  aes(
+    x = dt.d,
+    y = peak_area,
+    color = gas,
+    shape = as.factor(site),
+    group = as.factor(site)
+  ) +
+  geom_point(size = 2, color = "#0cc282") +
+  geom_line(color = "#0cc282") +
+  facet_wrap(vars(temp.str), nrow = 1) +
+  theme_bw() +
+  labs(
+    x = "∆t (days)",
+    y = "Peak Area",
+    title = "CH4"
+  ) +
+  theme(
+    legend.position = "NA"
+  )
+p30dch4
+
+# Get Legend:
+p30d_legend <- gc_samples_w_dt_mean |> 
+  filter(inc_time.d == 30, gas != "CO") |> 
+  ggplot() +
+  aes(
+    x = dt.d,
+    y = peak_area,
+    color = gas,
+    shape = as.factor(site),
+    group = as.factor(site)
+  ) +
+  geom_point(size = 2) +
+  geom_line() +
+  scale_color_manual(values = c("#ffa203", "#0cc282")) +
+  facet_wrap(vars(temp.str), nrow = 1) +
+  theme_bw() +
+  labs(
+    color = "Gas",
+    shape = "Site"
+  ) +
+  theme(
+    legend.position = "bottom"
+  )
+
+p30d_legend <- cowplot::get_legend(p30d_legend)
+
+# Plot as grid w/ shared legend
+cowplot::plot_grid(
+  p30dco2,
+  p30dch4,
+  p30d_legend,
+  nrow = 3,
+  rel_heights = c(1, 1, 0.1)
+)
+```
+
+
+
+
 
