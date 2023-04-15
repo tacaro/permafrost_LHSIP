@@ -1,0 +1,141 @@
+---
+title: "GC Data Import"
+author: "Tristan Caro"
+date: "`r Sys.Date()`"
+output: html_document
+editor_options: 
+  # to simultaneously be run as chunks within the console
+  # keep this set to inline: a bug in rstudio does not allow python and r
+  # to both run in the same scsript if chunk output is console.
+  chunk_output_type: inline
+---
+
+
+# Libraries
+
+```{r}
+library(tidyverse) # Easily Install and Load the 'Tidyverse', CRAN v1.3.2
+library(reticulate) # Interface to 'Python', CRAN v1.28 
+```
+
+# Execute python script
+
+This script parses GC data into a readable `.csv` file that we read into R.
+
+```{python}
+import numpy as np
+import pandas as pd
+import os
+
+
+# FUNCTION DEFINITION
+
+def read_GC_RES_file(file_name):
+    print("Reading file path: " + file_name)
+
+    with open(file_name) as file:
+        lines = file.readlines()
+
+    sample_type = lines[34]
+    column = lines[18]
+    carrier = lines[20]
+
+    file.close() # close the file
+
+    file = open(file_name) # open the file again
+
+    cleaned_array = [] # create an empty array
+
+    for i, line in enumerate(file):
+
+        if i < 42: # skip lines that have irrerlevant data
+            continue
+
+        else:
+            line_array = line.strip().split(',')
+
+            if len(line_array) == 1:
+
+                # Skipping the rows that have an empty list (empty lines in the file)
+                continue
+
+            # List comprehension on each element, stripping it of quotes. 
+            # Doesn't matter if it doesn't have quotes.
+            new_array = [x.strip('\"') for x in line_array]
+
+            # Append your new array to the storage array.
+            cleaned_array.append(new_array)
+
+    try:
+        # Write the results
+        data_array = np.array(cleaned_array)
+        data_array = data_array[:,:5]
+        # Write the relevant metadata
+        df = pd.DataFrame(data_array, columns=['gas', 'retention_time', 'peak_area', 'peak_height', 'correction_factor'])
+        # add the file name, removing newlines
+        df['file_name'] = file_name.replace('\n', '') 
+        # add the sample type (entered manually in program), removing newlines
+        df['sample_type'] = sample_type.replace('\n', '') 
+        # add column info, removing newlines
+        df['column'] = column.replace('\n', '') 
+        # add carrier info, removing newlines
+        df['carrier'] = carrier.replace('\n', '') 
+        return df
+    except IndexError:
+        print("Data file: " + file_name + " encountered an error. Check the file!")
+        pass
+    except ValueError:
+        print("Data file: " + file_name + " encountered an error. Check the file!")
+        pass
+
+
+# EXECUTE
+
+# If GC data is not in this directory, change this string!
+GC_file_directory = "data/GC_Data/Feb/" 
+GC_files = [f for f in os.listdir(GC_file_directory) if f.endswith(".RES") and "FID" in f]
+
+appended_data = []
+
+for res in GC_files:
+    data = read_GC_RES_file(GC_file_directory + res)
+    # store DataFrame in a list
+    appended_data.append(data)
+
+# See pd.concat documentation for more info on this operation
+appended_data = pd.concat(appended_data)
+# write DataFrame to csv
+appended_data.to_csv("data/GC_Data_Table.csv")
+```
+
+
+# Load data
+
+```{r}
+# Load GC raw data from the csv output from the python script
+gc <- read_csv("data/GC_Data_Table.csv") |> 
+  rename(gc_sample_id = sample_type) |> 
+  # fix mislabeled gas name. I guess on the GC, CO2 is called "C02" with a zero.
+  mutate(
+    gas = case_when(
+      gas == "C02" ~ "CO2",
+      TRUE ~ gas
+    )
+  )
+```
+
+
+# Optional: Data Cleanup
+
+## Separate samples/standards
+If your standards runs have the word "mix" in them, you can extract them with this filter.
+We can also extract the sample_volume if you added the volume of gas injected in the title.
+
+```{r}
+# Create new tibble for just standard runs
+gc_standards <- gc |> 
+  filter(str_detect(gc_sample_id, "mix")) |> 
+  mutate(
+    sample_volume = str_extract(gc_sample_id, "\\d+(\\.\\d+)?(?=ml)")
+  )
+```
