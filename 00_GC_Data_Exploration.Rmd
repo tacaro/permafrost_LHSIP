@@ -4,108 +4,25 @@ author: "Tristan Caro"
 date: "`r Sys.Date()`"
 output: html_document
 editor_options: 
-  # keep this set to inline: a bug in rstudio does not allow python and r
   # to simultaneously be run as chunks within the console
-  chunk_output_type: inline 
+  # keep this set to inline: a bug in rstudio does not allow python and r
+  chunk_output_type: inline
 ---
 
 
 # Libraries
 
 ```{r}
-library(tidyverse) # Easily Install and Load the 'Tidyverse', CRAN v1.3.2
-library(plotly) # Create Interactive Web Graphics via 'plotly.js', CRAN v4.10.1
-library(reticulate) # Interface to 'Python', CRAN v1.28 
+library(tidyverse)  # CRAN v1.3.2 
+library(plotly)     # CRAN v4.10.1 
+library(reticulate) # CRAN v1.28 c("#525252", "#808080", "#E6E6E6")
+library(lubridate)  # CRAN v1.9.2 
 ```
 
-# Execute python script
-
-This script parses GC data into a readable `.csv` file that we read into R.
-
-```{python}
-import numpy as np
-import pandas as pd
-import os
-
-
-# FUNCTION DEFINITION
-
-def read_GC_RES_file(file_name):
-    print("Reading file path: " + file_name)
-
-    with open(file_name) as file:
-        lines = file.readlines()
-
-    sample_type = lines[34]
-    column = lines[18]
-    carrier = lines[20]
-
-    file.close() # close the file
-
-    file = open(file_name) # open the file again
-
-    cleaned_array = [] # create an empty array
-
-    for i, line in enumerate(file):
-
-        if i < 42: # skip lines that have irrerlevant data
-            continue
-
-        else:
-            line_array = line.strip().split(',')
-
-            if len(line_array) == 1:
-
-                # Skipping the rows that have an empty list (empty lines in the file)
-                continue
-
-            # List comprehension on each element, stripping it of quotes. 
-            # Doesn't matter if it doesn't have quotes.
-            new_array = [x.strip('\"') for x in line_array]
-
-            # Append your new array to the storage array.
-            cleaned_array.append(new_array)
-
-    try:
-        # Write the results
-        data_array = np.array(cleaned_array)
-        data_array = data_array[:,:5]
-        # Write the relevant metadata
-        df = pd.DataFrame(data_array, columns=['gas', 'retention_time', 'peak_area', 'peak_height', 'correction_factor'])
-        # add the file name, removing newlines
-        df['file_name'] = file_name.replace('\n', '') 
-        # add the sample type (entered manually in program), removing newlines
-        df['sample_type'] = sample_type.replace('\n', '') 
-        # add column info, removing newlines
-        df['column'] = column.replace('\n', '') 
-        # add carrier info, removing newlines
-        df['carrier'] = carrier.replace('\n', '') 
-        return df
-    except IndexError:
-        print("Data file: " + file_name + " encountered an error. Check the file!")
-        pass
-    except ValueError:
-        print("Data file: " + file_name + " encountered an error. Check the file!")
-        pass
-
-
-# EXECUTE
-
-# If GC data is not in this directory, change this string!
-GC_file_directory = "data/GC_Data/Feb/" 
-GC_files = [f for f in os.listdir(GC_file_directory) if f.endswith(".RES") and "FID" in f]
-
-appended_data = []
-
-for res in GC_files:
-    data = read_GC_RES_file(GC_file_directory + res)
-    # store DataFrame in a list
-    appended_data.append(data)
-
-# See pd.concat documentation for more info on this operation
-appended_data = pd.concat(appended_data)
-# write DataFrame to csv
-appended_data.to_csv("data/GC_Data_Table.csv")
+# Process GC Data
+Run this code if new gc data has been added
+```{r}
+#system("python3 source/process_gc_data.py")
 ```
 
 
@@ -114,25 +31,38 @@ appended_data.to_csv("data/GC_Data_Table.csv")
 ```{r}
 # Load GC raw data
 gc <- read_csv("data/GC_Data_Table.csv") |> 
+  select(-c(`...1`)) |> # remove this trash column
   rename(gc_sample_id = sample_type) |> 
   # fix mislabeled gas name
   mutate(
     gas = case_when(
       gas == "C02" ~ "CO2",
       TRUE ~ gas
-    )
+    ),
+    # fix incorrectly entered date formats
+    file_name = str_replace(file_name, pattern = "Sept", replacement = "SEP"),
+    file_name = str_replace(file_name, pattern = "Apr", replacement = "APR"),
+    # Extract the analysis date from file name
+    analysis_date = str_extract(file_name, "\\d{2}[A-Z]{3}\\d{2}"),
+    # Convert to date
+    analysis_date = as_date(analysis_date, format = "%d%b%y")
   )
+  
 
 # load sample_matrix metadata
 sample_matrix <- read_csv("data/sample_matrix.csv") |> 
   # find number of days elapsed at GC timepoint
   mutate(
-    across(
-      c(inc_start_date, GC_T1, GC_T2, GC_T3, GC_T4, inc_end_date, 
-                saline_Ti, saline_Tf, frozen, decanted),
-      # Define the lambda function ~ where .x is the across variable
-      ~ as.Date(.x, format = "%d-%b-%y"), 
-    )
+    inc_start_date = as.Date(inc_start_date, format = "%d-%b-%y"),
+    GC_T1 = as_date(GC_T1, format = "%d-%b-%y"),
+    GC_T2 = as_date(GC_T2, format = "%d-%b-%y"),
+    GC_T3 = as_date(GC_T3, format = "%d-%b-%y"),
+    GC_T4 = as_date(GC_T4, format = "%d-%b-%y"),
+    inc_end_date = as.Date(inc_end_date, format = "%d-%b-%y"),
+    saline_Ti = as_date(saline_Ti, format = "%d-%b-%y"),
+    saline_Tf = as_date(saline_Tf, format = "%d-%b-%y"),
+    frozen = as_date(frozen, format = "%d-%b-%y"),
+    decanted = as_date(decanted, format = "%d-%b-%y"),
   ) |>
   mutate(
     dt1 = difftime(GC_T1, inc_start_date, units = "days"),
@@ -140,6 +70,19 @@ sample_matrix <- read_csv("data/sample_matrix.csv") |>
     dt3 = difftime(GC_T3, inc_start_date, units = "days"),
     dt4 = difftime(GC_T4, inc_start_date, units = "days"),
   )
+
+
+## why this code is broken, I have no idea:
+# across(
+#       # List the columns to mutate across:
+#       c(
+#         inc_start_date, GC_T1, GC_T2,
+#         GC_T3, GC_T4, inc_end_date, 
+#         saline_Ti, saline_Tf, frozen, decanted
+#         ),
+#       # Define the lambda function ~ where .x is the across variable:
+#       ~ as.Date(format = "%d-%b-%y"), 
+#     )
 
 # load list of bad gc standards injections
 bad_gc_list <- readxl::read_excel("data/bad_gc_list.xlsx") |> pull(file_name)
@@ -155,8 +98,9 @@ bad_gc_list <- readxl::read_excel("data/bad_gc_list.xlsx") |> pull(file_name)
 gc_standards <- gc |> 
   filter(str_detect(gc_sample_id, "mix")) |> 
   mutate(
-    sample_volume = str_extract(gc_sample_id, "\\d+(\\.\\d+)?(?=ml)")
-  )
+    sample_volume = as.numeric(str_extract(gc_sample_id, "\\d+(\\.\\d+)?(?=ml)"))
+  ) |> 
+  filter(sample_volume != 1)
 ```
 
 ## Parse text from sample code
@@ -167,11 +111,12 @@ gc_standards <- gc |>
 gc_samples <- gc |> 
   # filter for samples where first letter is
   filter(
-      str_sub(gc_sample_id, 1, 1) == "p"
+      str_sub(gc_sample_id, 1, 1) == "p",
+      !file_name %in% bad_gc_list
     ) |> 
   mutate(
     # extract sample volume
-    sample_volume = str_extract(gc_sample_id, "\\d+(\\.\\d+)?(?=ml)"),
+    sample_volume = as.numeric(str_extract(gc_sample_id, "\\d+(\\.\\d+)?(?=ml)")),
     # extract time point
     timepoint = str_extract(gc_sample_id, "T[0-9]"),
     # extract the incubation duration
@@ -262,145 +207,264 @@ gc_samples_w_dt_mean <- gc_samples_w_dt |>
     peak_height = mean(peak_height, na.rm = TRUE),
     retention_time = mean(retention_time, na.rm = TRUE),
     correction_factor = mean(correction_factor, na.rm = TRUE),
-    dt.d = mean(dt.d)
+    dt.d = mean(dt.d),
+    sample_volume = sample_volume
   ) |> 
   mutate(
     temp.str = as.factor(str_c(temp, "C")), 
     temp.str = fct_relevel(temp.str, c("-4C", "4C", "12C"))
     )
   
+gc_samples_w_dt <- gc_samples_w_dt |> 
+  mutate(
+    temp.str = as.factor(str_c(temp, "C")), 
+    temp.str = fct_relevel(temp.str, c("-4C", "4C", "12C"))
+    )
 ```
 
 
 # Generate standard curves
 
+Here we calculate the number of moles injected in our standard curve as follows:
+
+$$
+n = \frac{PV}{RT}
+$$
+where n is the number of moles, P is pressure in `atm`, V is volume in `mL`, R is the gas constant $R = 0.082057338 \space L\cdot atm \cdot K^{-1} mol^{-1}$.
+
+
 ```{r}
+volume_to_moles <- function(pressure_atm = 0.8, vol_mL, R = 0.082057338	, temp_C = 20) {
+  # n = PV/RT
+  # R = 0.082057338	L.atm.K-1.mol-1
+  # average atmospheric pressure in boulder is about 0.8 atm
+  temp_K = temp_C + 273 # convert ˚C to ˚K
+  vol_L = vol_mL / 1000 # convert mL to L
+  n_moles = (pressure_atm * vol_L) / (R * temp_K)
+  return(n_moles)
+}
+
+volume_to_moles(pressure_atm = 0.8, vol_mL = 0.5, temp_C = 20) # 1.6637e-05
+
+
 gc_standard_curve <- gc_standards |>
-  mutate(
-    date_injected = str_sub(file_name, start = -20, end = -14),
-    date_injected = as.Date(date_injected, format = "%d%b%y"), 
-  ) |>
+  ungroup() |> 
+  relocate(gas, peak_area, sample_volume) |> 
   filter(
     !is.na(sample_volume),
     !file_name %in% bad_gc_list
     ) |> 
-  group_by(gas, date_injected)
+  select(-c(retention_time, correction_factor, peak_height, gc_sample_id, column, carrier)) |> 
+  mutate(
+    mol_total = volume_to_moles(vol_mL = sample_volume), # moles of gas injected
+    nmol_total = mol_total / 1E-9, # nmol gas injected (total),
+    nmol_specific = nmol_total * .01, # 1% of the gas either CO2 or CH4
+  )
 
-gc_standard_curve |> 
+# Tidy the fits
+CH4_curve_fit <- lm(data = filter(gc_standard_curve, gas == "CH4"), peak_area ~ nmol_specific) |> broom::tidy() |> 
+  mutate(gas = "CH4") |> 
+  select(-c(std.error, statistic, p.value)) |> 
+  pivot_wider(names_from = term, values_from = estimate)
+CH4_curve_slope <- CH4_curve_fit |> pull(nmol_specific)
+CH4_curve_int <- CH4_curve_fit |> pull(`(Intercept)`)
+CH4_curve_equation <- paste("y =", round(CH4_curve_slope, 2), "+", round(CH4_curve_int, 2))
+
+CO2_curve_fit <- lm(data = filter(gc_standard_curve, gas == "CO2"), peak_area ~ nmol_specific) |> 
+  broom::tidy() |> 
+  mutate(gas = "CO2") |> 
+  select(-c(std.error, statistic, p.value)) |> 
+  pivot_wider(names_from = term, values_from = estimate)
+CO2_curve_slope <- CO2_curve_fit |> pull(nmol_specific)
+CO2_curve_int <- CO2_curve_fit |> pull(`(Intercept)`)
+CO2_curve_equation <- paste("y =", round(CO2_curve_slope, 2), "+", round(CO2_curve_int, 2))
+
+CH4_curve_equation
+CO2_curve_equation
+```
+
+Now we have a calibration that we can use to convert peak area to partial pressure:
+
+$$
+P = \frac{nRT}{V}
+$$
+but first we convert from peak area to $n$ nanomoles of gas injected:
+
+$$
+\begin{aligned}
+A = nx + b \\
+n = \frac{(A-b)}{x}
+\end{aligned}
+$$
+where A is peak area, x is the defined slope, b is the y intercept, and n is the number of moles.
+
+```{r}
+peak_area_to_moles_per_mL <- function(peak_area, vol_mL, slope, intercept) {
+  n_nmol = (peak_area - intercept) / slope # n = (A-b) / x
+  mol = n_nmol / 1E9 # convert nanomoles to moles
+  mol_per_mL = mol / vol_mL # convert to moles per mL gas
+  return(
+    case_when(
+      mol_per_mL > 0 ~ mol_per_mL,
+      mol_per_mL <= 0 ~ 0
+    )
+  )
+}
+
+peak_area_to_pressure <- function(peak_area, R = 0.082057338, temp_C = 20, vol_mL, slope, intercept) {
+  # R = 0.082057338	L.atm.K-1.mol-1
+  temp_K = 273 + temp_C # convert to ˚K
+  vol_L = vol_mL / 1000 # convert to L
+  n_nmol = (peak_area - intercept) / slope # n = (A-b) / x
+  n_mol = n_nmol / 1E9 # convert nanomoles to moles
+  pressure_atm = (n_mol * R * temp_K)/vol_L # P = nRT/V
+  return(pressure_atm)
+}
+
+# Test it:
+peak_area_to_pressure(25000, vol_mL = 0.5, slope = CO2_curve_slope, intercept = CO2_curve_int)
+# 0.009287613 # should be about 1%
+```
+
+## Plot the standard curves
+```{r}
+p_std_curve <- gc_standard_curve |> 
+  filter(gas != "CO") |> 
   ggplot() +
   aes(
-    x = as.numeric(sample_volume), 
+    x = nmol_specific, 
     y = peak_area, 
-    color = gas,
+    group = analysis_date,
     label = file_name
     ) +
   geom_point() +
-  geom_smooth(method = "lm", formula = "y~x") +
+  
+  geom_abline(
+    data = CH4_curve_fit,
+    aes(
+      slope = nmol_specific,
+      intercept = `(Intercept)`
+    ),
+    color = "blue",
+    linetype = "dashed"
+    ) +
+  geom_abline(
+    data = CO2_curve_fit,
+    aes(
+      slope = nmol_specific,
+      intercept = `(Intercept)`
+    ),
+    color = "blue",
+    linetype = "dashed"
+    ) +
+  
   ggsci::scale_color_igv() +
   facet_wrap(vars(gas), scales = "free_y") +
-  coord_cartesian(ylim = c(10000, 50000)) +
-  scale_x_continuous(breaks = c(0.25, 0.5, 0.75, 1)) +
-  theme_classic() +
+  #coord_cartesian(ylim = c(10000, 50000)) +
+  #scale_x_continuous(breaks = c(0.25, 0.5, 0.75, 1)) +
+  theme_bw() +
   labs(
     color = "Gas",
-    x = "Vol. Injected (mL)",
+    x = "nmol gas injected",
     y = "Peak Area"
   ) +
   theme(
     strip.background = element_blank(),
-    legend.position = "bottom"
+    legend.position = "bottom",
+    panel.grid = element_blank()
   )
-  
+
+p_std_curve
 ```
+
+
+# Convert peak area to moles/pressure
+
+We calculate the number of moles per mL of gas, then the number of µg per mL of gas
+The MW of $CH_4$ is 16.04 g/mol. The MW of CO2 is 44.01 g/mol.
+
+$$
+\begin{aligned}
+g/mL &= mol * MW \\
+µg/mL &= g/mL * (1e^-6)
+\end{aligned}
+$$
+
+
+```{r}
+MW.CO2 <- 44.01 #g/mol
+MW.CH4 <- 16.04 #g/mol
+
+
+gc_samples_processed <- gc_samples_w_dt |> 
+  filter(gas != "CO") |> 
+  mutate(
+    # add the standard curve parameters
+    fit_slope = case_when(
+      gas == "CO2" ~ CO2_curve_slope,
+      gas == "CH4" ~ CH4_curve_slope
+    ),
+    fit_int = case_when(
+      gas == "CO2" ~ CO2_curve_int,
+      gas == "CH4" ~ CH4_curve_int
+    ),
+    # Calculate moles per mL of gas
+    mol_per_ml = peak_area_to_moles_per_mL(
+      peak_area = peak_area, 
+      vol_mL = sample_volume, 
+      slope = fit_slope, 
+      intercept = fit_int
+      ),
+    nmol_per_ml = mol_per_ml * 1E9,
+    partial_P_atm = peak_area_to_pressure(
+      peak_area = peak_area,
+      vol_mL = sample_volume,
+      slope = fit_slope,
+      intercept = fit_int
+    ),
+    # Calculate mass per mL of gas
+    ug_per_ml = case_when(
+      gas == "CO2" ~ (mol_per_ml * MW.CO2) * 1e-6,
+      gas == "CH4" ~ (mol_per_ml * MW.CH4) * 1e-6
+    )
+  )
+```
+
+
 
 
 # Exploratory plots
 
-
+Timeseries
 ```{r}
-p30dco2 <- gc_samples_w_dt_mean |> 
-  filter(inc_time.d == 30, gas == "CO2") |> 
+gc_samples_processed |> 
+  filter(inc_time.d == 7) |> 
   ggplot() +
   aes(
     x = dt.d,
-    y = peak_area,
-    color = gas,
-    shape = as.factor(site),
-    group = as.factor(site)
+    y = nmol_per_ml,
+    group = sample_id,
+    label = file_name,
+    color = as.factor(temp)
   ) +
-  geom_point(size = 2, color = "#ffa203") +
-  geom_line(color = "#ffa203") +
-  facet_wrap(vars(temp.str), nrow = 1) +
-  theme_bw() +
-  labs(
-    x = "∆t (days)",
-    y = "Peak Area",
-    title = "CO2"
+  geom_point(
   ) +
-  theme(
-    legend.position = "NA"
-  )
-p30dco2
-
-p30dch4 <- gc_samples_w_dt_mean |> 
-  filter(inc_time.d == 30, gas == "CH4") |> 
-  ggplot() +
-  aes(
-    x = dt.d,
-    y = peak_area,
-    color = gas,
-    shape = as.factor(site),
-    group = as.factor(site)
-  ) +
-  geom_point(size = 2, color = "#0cc282") +
-  geom_line(color = "#0cc282") +
-  facet_wrap(vars(temp.str), nrow = 1) +
-  theme_bw() +
-  labs(
-    x = "∆t (days)",
-    y = "Peak Area",
-    title = "CH4"
-  ) +
-  theme(
-    legend.position = "NA"
-  )
-p30dch4
-
-# Get Legend:
-p30d_legend <- gc_samples_w_dt_mean |> 
-  filter(inc_time.d == 30, gas != "CO") |> 
-  ggplot() +
-  aes(
-    x = dt.d,
-    y = peak_area,
-    color = gas,
-    shape = as.factor(site),
-    group = as.factor(site)
-  ) +
-  geom_point(size = 2) +
+  scale_shape_manual(values = c(0, 1)) +
   geom_line() +
-  scale_color_manual(values = c("#ffa203", "#0cc282")) +
-  facet_wrap(vars(temp.str), nrow = 1) +
+  scale_colour_viridis_d(begin = 0.2, end = 0.8, option = "magma") +
+  facet_wrap(vars(site, gas), scales = "free_y", ncol = 2) +
   theme_bw() +
   labs(
-    color = "Gas",
-    shape = "Site"
+    x = "∆t (Days)",
+    y = latex2exp::TeX("$nmol \\cdot ml^{-1}$")
   ) +
   theme(
-    legend.position = "bottom"
+    panel.grid = element_blank()
   )
 
-p30d_legend <- cowplot::get_legend(p30d_legend)
-
-# Plot as grid w/ shared legend
-cowplot::plot_grid(
-  p30dco2,
-  p30dch4,
-  p30d_legend,
-  nrow = 3,
-  rel_heights = c(1, 1, 0.1)
-)
+ggplotly()
 ```
+
 
 
 
