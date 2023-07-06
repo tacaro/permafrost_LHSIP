@@ -9,7 +9,6 @@ editor_options:
   chunk_output_type: inline
 ---
 
-
 # Libraries
 
 ```{r}
@@ -20,11 +19,12 @@ library(lubridate)  # CRAN v1.9.2
 ```
 
 # Process GC Data
+
 Run this code if new gc data has been added
+
 ```{r}
 #system("python3 source/process_gc_data.py")
 ```
-
 
 # Load data
 
@@ -87,7 +87,6 @@ sample_matrix <- read_csv("data/sample_matrix.csv") |>
 # load list of bad gc standards injections
 bad_gc_list <- readxl::read_excel("data/bad_gc_list.xlsx") |> pull(file_name)
 ```
-
 
 # Data Cleanup
 
@@ -222,16 +221,13 @@ gc_samples_w_dt <- gc_samples_w_dt |>
     )
 ```
 
-
 # Generate standard curves
 
 Here we calculate the number of moles injected in our standard curve as follows:
 
 $$
 n = \frac{PV}{RT}
-$$
-where n is the number of moles, P is pressure in `atm`, V is volume in `mL`, R is the gas constant $R = 0.082057338 \space L\cdot atm \cdot K^{-1} mol^{-1}$.
-
+$$ where n is the number of moles, P is pressure in `atm`, V is volume in `mL`, R is the gas constant $R = 0.082057338 \space L\cdot atm \cdot K^{-1} mol^{-1}$.
 
 ```{r}
 volume_to_moles <- function(pressure_atm = 0.8, vol_mL, R = 0.082057338	, temp_C = 20) {
@@ -287,16 +283,14 @@ Now we have a calibration that we can use to convert peak area to partial pressu
 
 $$
 P = \frac{nRT}{V}
-$$
-but first we convert from peak area to $n$ nanomoles of gas injected:
+$$ but first we convert from peak area to $n$ nanomoles of gas injected:
 
 $$
 \begin{aligned}
 A = nx + b \\
 n = \frac{(A-b)}{x}
 \end{aligned}
-$$
-where A is peak area, x is the defined slope, b is the y intercept, and n is the number of moles.
+$$ where A is peak area, x is the defined slope, b is the y intercept, and n is the number of moles.
 
 ```{r}
 peak_area_to_moles_per_mL <- function(peak_area, vol_mL, slope, intercept) {
@@ -327,6 +321,7 @@ peak_area_to_pressure(25000, vol_mL = 0.5, slope = CO2_curve_slope, intercept = 
 ```
 
 ## Plot the standard curves
+
 ```{r}
 p_std_curve <- gc_standard_curve |> 
   filter(gas != "CO") |> 
@@ -377,11 +372,9 @@ p_std_curve <- gc_standard_curve |>
 p_std_curve
 ```
 
-
 # Convert peak area to moles/pressure
 
-We calculate the number of moles per mL of gas, then the number of µg per mL of gas
-The MW of $CH_4$ is 16.04 g/mol. The MW of CO2 is 44.01 g/mol.
+We calculate the number of moles per mL of gas, then the number of µg per mL of gas The MW of $CH_4$ is 16.04 g/mol. The MW of CO2 is 44.01 g/mol.
 
 $$
 \begin{aligned}
@@ -389,7 +382,6 @@ g/mL &= mol * MW \\
 µg/mL &= g/mL * (1e^-6)
 \end{aligned}
 $$
-
 
 ```{r}
 MW.CO2 <- 44.01 #g/mol
@@ -430,15 +422,14 @@ gc_samples_processed <- gc_samples_w_dt |>
   )
 ```
 
-
-
-
 # Exploratory plots
 
 Timeseries
+
 ```{r}
-gc_samples_processed |> 
-  filter(inc_time.d == 7) |> 
+p_co2 <- gc_samples_processed |> 
+  filter(inc_time.d == 180) |> 
+  filter(gas == "CO2") |> 
   ggplot() +
   aes(
     x = dt.d,
@@ -452,21 +443,53 @@ gc_samples_processed |>
   scale_shape_manual(values = c(0, 1)) +
   geom_line() +
   scale_colour_viridis_d(begin = 0.2, end = 0.8, option = "magma") +
-  facet_wrap(vars(site, gas), scales = "free_y", ncol = 2) +
+  facet_wrap(vars(site), nrow = 1) +
+  coord_cartesian(ylim = c(0, 900)) +
   theme_bw() +
   labs(
-    x = "∆t (Days)",
-    y = latex2exp::TeX("$nmol \\cdot ml^{-1}$")
+    x = latex2exp::TeX("$\\Delta$t (Days)"),
+    y = latex2exp::TeX("$nmol \\cdot ml^{-1}$"),
+    color = "Incubation Temp (C)"
   ) +
   theme(
     panel.grid = element_blank()
   )
+p_co2
 
-ggplotly()
+p_ch4 <- gc_samples_processed |> 
+  filter(inc_time.d == 180) |> 
+  filter(gas == "CH4") |> 
+  ggplot() +
+  aes(
+    x = dt.d,
+    y = nmol_per_ml,
+    group = sample_id,
+    label = file_name,
+    color = as.factor(temp)
+  ) +
+  geom_point(
+  ) +
+  scale_shape_manual(values = c(0, 1)) +
+  geom_line() +
+  scale_colour_viridis_d(begin = 0.2, end = 0.8, option = "magma") +
+  facet_wrap(vars(site), nrow = 1) +
+  coord_cartesian(ylim = c(0, 25)) +
+  theme_bw() +
+  labs(
+    x = latex2exp::TeX("$\\Delta$t (Days)"),
+    y = latex2exp::TeX("$nmol \\cdot ml^{-1}$"),
+    color = "Incubation Temp (C)"
+  ) +
+  theme(
+    panel.grid = element_blank()
+  )
+p_ch4
+
+p_co2ch4 <- cowplot::plot_grid(p_co2, p_ch4, nrow = 2)
+cowplot::save_plot(
+  filename = "fig_output/p_co2ch4.pdf",
+  plot = p_co2ch4,
+  base_height = 6,
+  base_width = 10)
+#ggplotly()
 ```
-
-
-
-
-
-
