@@ -1,0 +1,88 @@
+---
+title: "GC-FID Data Processing"
+format: html
+editor: visual
+editor_options: 
+  chunk_output_type: console
+---
+
+## Setup
+
+```{r}
+library(tidyverse)
+library(ggpmisc)
+library(rms)
+```
+
+## Data Import
+
+```{r}
+source("source/read_chromeleon_export.R")
+```
+
+### Data Cleanup
+
+```{r}
+root <- file.path("data", "GC-FID_Data", "2023-08-11_TAC_PAIBE_Standards/")
+
+file_list = list.files(path = root)
+file_list <- file_list |> 
+  str_subset("blank", negate = TRUE) |> 
+  str_subset("Blank", negate = TRUE) |> 
+  str_subset("GCMS-STD", negate = TRUE) |> 
+  str_subset("BLK", negate = TRUE) # remove procedural blanks
+
+sample_names <- file_list |> 
+  str_replace("FID....._", "") |> 
+  str_replace("_100ul-nhex.xls", "") |> 
+  str_replace(".xls", "")
+
+FID_all_data <-
+  tibble(
+    sample = sample_names,
+    file = file_list,
+    data = map(file.path(root, file), read_chromeleon_export),
+    injection_details = map(data, "injection_details"),
+    integration_results = map(data, "integration_results")
+  )  |>  select(-data)
+
+FID_results <- FID_all_data |> 
+  select(-injection_details) |> 
+  unnest(integration_results) |> 
+  filter(nchar(`Peak Name`) > 0)
+
+PAIBE_external_standard <- FID_results |> 
+  filter(
+    str_detect(sample, "PAIBE"), # filter to PAIBE injections only
+    str_detect(`Peak Name`, "PAIBE"), # filter to PAIBE peak only
+  ) |> 
+  mutate(
+    PAIBE_amount_ng = abs(parse_number(sample))
+  )
+
+PAIBE_external_standard |> 
+  ggplot(
+    aes(
+      x = Area,
+      y = PAIBE_amount_ng
+    )
+  ) +
+  geom_point() +
+  stat_poly_line() +
+  stat_poly_eq(use_label(c("eq", "R2"))) +
+  theme_bw() +
+  theme(panel.grid.minor = element_blank()) +
+  labs(
+    y = "PAIBE mass injected (ng)",
+    x = "Peak Area (pA*min)"
+  )
+
+PAIBE_fit <- ols(data = PAIBE_external_standard, PAIBE_amount_ng ~ Area)
+peak_area_to_ng <- Function(PAIBE_fit)
+```
+
+## Export Cache
+
+```{r}
+
+```
