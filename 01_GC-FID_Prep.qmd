@@ -16,11 +16,26 @@ library(rms)
 
 ## Data Import
 
+Import the required R script for reading default chromeleon export files.
+
 ```{r}
 source("source/read_chromeleon_export.R")
 ```
 
-### Data Cleanup
+### Import metadata
+
+```{r}
+FID_sample_metadata <- readxl::read_excel("data/sample_matrix.xlsx") |> 
+  select(
+    sample_id,
+    sample_num = `sample#`, # rename this column
+    core,
+    temp, 
+    inc_time_d
+  )
+```
+
+### Standards Import and Cleanup
 
 ```{r}
 root <- file.path("data", "GC-FID_Data", "2023-08-11_TAC_PAIBE_Standards/")
@@ -37,7 +52,7 @@ sample_names <- file_list |>
   str_replace("_100ul-nhex.xls", "") |> 
   str_replace(".xls", "")
 
-FID_all_data <-
+FID_all_data_stds <-
   tibble(
     sample = sample_names,
     file = file_list,
@@ -46,12 +61,12 @@ FID_all_data <-
     integration_results = map(data, "integration_results")
   )  |>  select(-data)
 
-FID_results <- FID_all_data |> 
+FID_results_stds <- FID_all_data_stds |> 
   select(-injection_details) |> 
   unnest(integration_results) |> 
   filter(nchar(`Peak Name`) > 0)
 
-PAIBE_external_standard <- FID_results |> 
+PAIBE_external_standard <- FID_results_stds |> 
   filter(
     str_detect(sample, "PAIBE"), # filter to PAIBE injections only
     str_detect(`Peak Name`, "PAIBE"), # filter to PAIBE peak only
@@ -81,8 +96,126 @@ PAIBE_fit <- ols(data = PAIBE_external_standard, PAIBE_amount_ng ~ Area)
 peak_area_to_ng <- Function(PAIBE_fit)
 ```
 
+## Samples Import
+
+### F2s
+
+```{r}
+root_F2 <- "data/GC-FID_Data/2023-08-17_TAC_Permafrost_F2s/"
+
+file_list = list.files(path = root_F2)
+file_list <- file_list |> 
+  str_subset("blank", negate = TRUE) |> 
+  str_subset("Blank", negate = TRUE) |> 
+  str_subset("GCMS-STD", negate = TRUE) |> 
+  str_subset("BLK", negate = TRUE) # remove procedural blanks
+
+sample_names <- file_list |> 
+  str_replace("FID....._", "") |> 
+  str_replace("_100ul-nhex.xls", "") |> 
+  str_replace(".xls", "")
+
+FID_all_data_F2s <-
+  tibble(
+    sample = sample_names,
+    file = file_list,
+    data = map(file.path(root_F2, file), read_chromeleon_export),
+    injection_details = map(data, "injection_details"),
+    integration_results = map(data, "integration_results")
+  )  |>  select(-data)
+
+FID_results_F2s <- FID_all_data_F2s |> 
+  select(-injection_details) |> 
+  unnest(integration_results) |> 
+  filter(nchar(`Peak Name`) > 0)
+```
+
+### F3s
+
+```{r}
+root_F3 <- "data/GC-FID_Data/2023-08-14_TAC_Permafrost_F3s"
+
+file_list = list.files(path = root_F3)
+file_list <- file_list |> 
+  str_subset("blank", negate = TRUE) |> 
+  str_subset("Blank", negate = TRUE) |> 
+  str_subset("GCMS-STD", negate = TRUE) |> 
+  str_subset("BLK", negate = TRUE) # remove procedural blanks
+
+sample_names <- file_list |> 
+  str_replace("FID....._", "") |> 
+  str_replace("_100ul-nhex.xls", "") |> 
+  str_replace(".xls", "")
+
+FID_all_data_F3s <-
+  tibble(
+    sample = sample_names,
+    file = file_list,
+    data = map(file.path(root_F3, file), read_chromeleon_export),
+    injection_details = map(data, "injection_details"),
+    integration_results = map(data, "integration_results")
+  )  |>  select(-data)
+
+FID_results_F3s <- FID_all_data_F3s |> 
+  select(-injection_details) |> 
+  unnest(integration_results) |> 
+  filter(nchar(`Peak Name`) > 0)
+```
+
+### Join the sample datasetes
+
+```{r}
+FID_sample_results <- FID_results_F2s |> 
+  bind_rows(FID_results_F3s) |> 
+  # cleanup
+  select(-c(`No.`, Amount, `Relative Area`, `Relative Height`)) |> 
+  # convert area to ng
+  mutate(
+    mass_analyte_ng_per_ul = peak_area_to_ng(Area),
+    sample_volume = parse_number(str_extract(sample, "\\d{2,3}ul")),
+    mass_analyte_total = mass_analyte_ng_per_ul * sample_volume,
+    # define the SPE fraction
+    fraction = case_when(
+      str_detect(sample, "F2") ~ "F2",
+      str_detect(sample, "F3") ~ "F3"
+    ),
+    # parse sample names for joining
+    sample_id = str_extract(sample, ".*?(?=-F2|-F3|$)") 
+  )
+```
+
+### Join sample metadata
+
+```{r}
+FID_samples <- FID_sample_results |> 
+  left_join(FID_sample_metadata, by = "sample_id")
+```
+
 ## Export Cache
 
 ```{r}
+saveRDS(PAIBE_external_standard, "cache/PAIBE_standard.RDS")
+saveRDS(FID_sample_results, "cache/FID_sample_results.RDS")
+```
 
+# Exploratory plots
+
+```{r}
+FID_sample_results |> 
+  filter(!str_detect(sample, "BAME"),
+         !str_detect(sample, "37FAME")
+         ) |> 
+  filter(str_detect(sample, "F2")) |> 
+  filter(!`Peak Name` %in% c("21:0", "23:0")) |> 
+  ggplot(
+    aes(
+      x = `Peak Name`,
+      y = mass_analyte_total
+    )
+  ) +
+  geom_col() +
+  facet_wrap(vars(sample)) +
+  theme(
+    axis.text.x = element_text(angle = 90)
+  )
 ```
