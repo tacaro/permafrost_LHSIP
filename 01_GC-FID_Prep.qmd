@@ -12,6 +12,9 @@ editor_options:
 library(tidyverse)
 library(ggpmisc)
 library(rms)
+
+# Clear environment
+rm(list = ls())
 ```
 
 ## Data Import
@@ -173,7 +176,7 @@ FID_sample_results <- FID_results_F2s |>
   mutate(
     mass_analyte_ng_per_ul = peak_area_to_ng(Area),
     sample_volume = parse_number(str_extract(sample, "\\d{2,3}ul")),
-    mass_analyte_total = mass_analyte_ng_per_ul * sample_volume,
+    mass_analyte_total_ng = mass_analyte_ng_per_ul * sample_volume,
     # define the SPE fraction
     fraction = case_when(
       str_detect(sample, "F2") ~ "F2",
@@ -181,6 +184,14 @@ FID_sample_results <- FID_results_F2s |>
     ),
     # parse sample names for joining
     sample_id = str_extract(sample, ".*?(?=-F2|-F3|$)") 
+  ) |> 
+  # in quantification range of IRMS?
+  mutate(
+    quantifiable = if_else(
+      mass_analyte_total_ng >= 150,
+      true = TRUE,
+      false = FALSE
+    )
   )
 ```
 
@@ -188,34 +199,201 @@ FID_sample_results <- FID_results_F2s |>
 
 ```{r}
 FID_samples <- FID_sample_results |> 
-  left_join(FID_sample_metadata, by = "sample_id")
+  left_join(FID_sample_metadata, by = "sample_id") |> 
+  # remove standards, readychecks, flameoffs
+  filter(
+    !str_detect(sample, "BAME"),
+    !str_detect(sample, "37FAME"),
+    !str_detect(sample, "RDYCHK"),
+    !str_detect(sample, "FLAMEOFF")
+     )
 ```
 
-## Export Cache
+### Virtually combine F2s and F3s
+
+```{r}
+FID_samples_combined <- FID_samples |> 
+  select(
+    sample_id, fraction, `Peak Name`, 
+    mass_analyte_total_ng, core, temp, inc_time_d
+    ) |> 
+  mutate(
+    mass_F2_ng = case_when(fraction == "F2" ~ mass_analyte_total_ng),
+    mass_F3_ng = case_when(fraction == "F3" ~ mass_analyte_total_ng)
+  ) |> 
+  group_by(
+    sample_id, `Peak Name`, core, temp, inc_time_d
+  ) |> 
+  dplyr::summarize(
+    mass_F2_ng = sum(mass_F2_ng, na.rm = TRUE),
+    mass_F3_ng = sum(mass_F3_ng, na.rm = TRUE)
+  ) |> 
+  ungroup() |>
+  group_by(sample_id, `Peak Name`) |> 
+  mutate(
+    combined_sample_mass_ng = sum(mass_F3_ng, mass_F2_ng),
+    ) |> 
+  # in quantification range of IRMS?
+  mutate(
+    quantifiable_combined = if_else(
+      combined_sample_mass_ng >= 150,
+      true = TRUE,
+      false = FALSE
+    ),
+    quantifiable_F2 = if_else(
+      mass_F2_ng >= 150,
+      true = TRUE,
+      false = FALSE
+    ),
+    quantifiable_F3 = if_else(
+      mass_F3_ng >= 150,
+      true = TRUE,
+      false = FALSE
+    ),
+  ) |> view()
+```
+
+## Export Cache and clean environment
 
 ```{r}
 saveRDS(PAIBE_external_standard, "cache/PAIBE_standard.RDS")
 saveRDS(FID_sample_results, "cache/FID_sample_results.RDS")
+saveRDS(FID_samples, "cache/FID_samples.RDS")
+
+# remove some global variables that arent useful anymore
+rm(FID_all_data_F2s)
+rm(FID_all_data_F3s)
+rm(FID_results_F3s)
+#rm(FID_sample_results)
 ```
 
 # Exploratory plots
 
+### Are the F3 analytes quantifiable?
+
 ```{r}
-FID_sample_results |> 
-  filter(!str_detect(sample, "BAME"),
-         !str_detect(sample, "37FAME")
-         ) |> 
-  filter(str_detect(sample, "F2")) |> 
+p_F3s <- FID_samples_combined |>
   filter(!`Peak Name` %in% c("21:0", "23:0")) |> 
+  filter(inc_time_d != 180) |> 
   ggplot(
     aes(
       x = `Peak Name`,
-      y = mass_analyte_total
+      y = mass_F3_ng,
+      fill = quantifiable_F3
     )
   ) +
   geom_col() +
-  facet_wrap(vars(sample)) +
+  scale_fill_manual(values = c("black", "#9713f0")) +
+  #geom_point(aes(shape = quantifiable_F3)) +
+  facet_grid(vars(core, temp), vars(inc_time_d), scales = "free_y") +
+  geom_hline(yintercept = 150, color = "red") +
+  theme_bw() +
+  labs(
+    title = "F3 (Phospholipids) Quantification",
+    y = "Total Analyte Mass (ng)"
+  ) +
   theme(
-    axis.text.x = element_text(angle = 90)
+    axis.text.x = element_text(angle = 90, size = 6, hjust = 1),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    legend.position = "None",
+    axis.title.x = element_blank()
+  )
+p_F3s
+
+cowplot::save_plot(
+  plot = p_F3s,
+  filename = "fig_output/F3_quant.pdf",
+  base_height = 11,
+  base_width = 8.5
+  )
+```
+
+### Are the F2s quantifiable?
+
+```{r}
+p_F2s <- FID_samples_combined |>
+  filter(!`Peak Name` %in% c("21:0", "23:0")) |> 
+  filter(inc_time_d != 180) |> 
+  ggplot(
+    aes(
+      x = `Peak Name`,
+      y = mass_F2_ng,
+      fill = quantifiable_F2
+    )
+  ) +
+  geom_col() +
+  scale_fill_manual(values = c("black", "#21918a")) +
+  facet_grid(vars(core, temp), vars(inc_time_d), scales = "free_y") +
+  geom_hline(yintercept = 150, color = "red") +
+  labs(
+    y = "Total Analyte Mass (ng)",
+    title = "F2 (Glycolipids) Quantification"
+  ) +
+  theme_bw() +
+  theme(
+    axis.text.x = element_text(angle = 90, size = 6, hjust = 1),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    legend.position = "None",
+    axis.title.x = element_blank()
+  )
+p_F2s
+
+cowplot::save_plot(
+  plot = p_F2s,
+  filename = "fig_output/F2_quant.pdf",
+  base_height = 11,
+  base_width = 8.5
+  )
+```
+
+### What about the combined samples?
+
+```{r}
+p_combined <- FID_samples_combined |> 
+  filter(!`Peak Name` %in% c("21:0", "23:0")) |> 
+  filter(inc_time_d != 180) |> 
+    rename(F2 = mass_F2_ng,
+         F3 = mass_F3_ng) |> 
+  pivot_longer(cols = c(F2, F3),
+               names_to = "fraction",
+               values_to = "mass_ng") |> 
+  ggplot(
+    aes(
+      x = `Peak Name`,
+      y = mass_ng,
+      fill = fraction
+    )
+  ) +
+  geom_col() +
+  geom_point(
+    aes(
+      y = combined_sample_mass_ng,
+      shape = quantifiable_combined
+    )
+  ) +
+  scale_shape_manual(values = c(NA, 8)) +
+  facet_grid(vars(core, temp), vars(inc_time_d), scales = "free_y") +
+  scale_fill_manual(values = c("#21918a", "#9713f0")) +
+  geom_hline(yintercept = 150, color = "red") +
+  labs(title = "Combined F2 + F3") +
+  theme_bw() +
+  theme(
+    axis.text.x = element_text(angle = 90, size = 6, hjust = 1),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    legend.position = "bottom"
+  ) +
+  guides(
+    shape = "none",
+    color = "none"
+  )
+
+cowplot::save_plot(
+  plot = p_combined,
+  filename = "fig_output/combined_quant.pdf",
+  base_height = 11,
+  base_width = 8.5
   )
 ```
