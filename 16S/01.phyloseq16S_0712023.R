@@ -94,13 +94,14 @@ colnames(otu_table(permafrost_16S_raw.ps)) # names associated with the otu table
 sample_names(permafrost_16S_raw.ps) #names associated with the mapping table
 sample_variables(permafrost_16S_raw.ps)
 sample_sums(permafrost_16S_raw.ps) #returns the ASV count for each sample
-
+# Blanks have 20 and 36 reads
+# samples have min = 94,743, max = 248,921
 
 #### Get Phylum counts ####
 rank_names(permafrost_16S_raw.ps)
 table(tax_table(permafrost_16S_raw.ps)[, "Phylum"], exclude = NULL)
 # probably want to remove the NA phyla and the phyla with only 1 feature
-permafrost_16S_removeNA.ps <- subset_taxa(permafrost_16S_raw.ps, !is.na(Phylum))
+permafrost_16S_removeNA.ps <- subset_taxa(permafrost_16S_raw.ps, !is.na(Phylum)) # I am not sure that this works
 
 
 #### Prevalence ####
@@ -140,7 +141,7 @@ table(tax_table(permafrost_16S_removeNA_prevalent.ps)[, "Phylum"], exclude = NUL
 # chloroplast is an order and mitochondria is a family in this version of SILVA
 ##################################################################
 # Get taxonomy table out of phyloseq:
-permafrost16S_taxTable <- psmelt(permafrost_16S_removeNA_prevalent.ps) # this takes some time
+permafrost16S_taxTable <- psmelt(permafrost_16S_removeNA_prevalent.ps) # this takes some time, be patient
 
 # First check what will be removed
 tax_filt <- permafrost16S_taxTable %>%
@@ -241,6 +242,13 @@ mean(phyloseq::sample_sums(permafrost_16S_ps))
 # mean reads per sample = 125409.9
 median(phyloseq::sample_sums(permafrost_16S_ps))
 # median reads per sample = 126256.5
+
+# mean without the blanks
+mean(sort(phyloseq::sample_sums(permafrost_16S_ps))[3:42])
+# 131679.1
+# median without the blanks
+median(sort(phyloseq::sample_sums(permafrost_16S_ps))[3:42])
+#128529.5
 
 # How are number of reads distributed across the samples?
 seqcounts <- as.data.frame(sort(colSums(otu_table(permafrost_16S_ps)))) %>%

@@ -207,7 +207,7 @@ phylaSubset_abund3 <- rbind(phylaSubset_abund2, total_relAbund)
 total_relAbund2 <- phylaSubset_abund3 %>%
   group_by(Sample) %>%
   summarise(sum = sum(relAbund)) # YES!!!!
-View(total_relAbund2)
+head(total_relAbund2)
 
 # plot it!
 # Plot Relative Abundance
@@ -220,10 +220,10 @@ phylaSubset_abund3$Sample <- factor(phylaSubset_abund3$Sample, levels = c("pUS.1
 
 # Plot Relative Abundance - basic
 phylaSubset_abund3 %>%
-  filter(depth == "US") %>%
+  #filter(depth == "US") %>%
   #filter(depth == "35") %>%
   #filter(depth == "54") %>%
-  #filter(depth == "83") %>%
+  filter(depth == "83") %>%
   ggplot(aes(y = relAbund, x = incubation_time_d, fill = Phylum)) +
   geom_bar(stat = "identity", colour = "black", linewidth = 0.25) +
   labs(x = "Incubation Time (days)", y = "Relative Abundance", fill = "Phyla") +
@@ -239,6 +239,9 @@ phylaSubset_abund3 %>%
   facet_grid(cols = vars(incubation_temp_C), scales = "free")
 
 #ggsave("output/phyla_stackedbar_US.pdf", width = 4, height = 4)
+
+
+
 
 
 # Archaea
@@ -257,8 +260,119 @@ archaea <- taxa_table %>% filter(Phylum %in% c("Crenarchaeota", "Euryarchaeota",
 # create a list of ASVs which are archaea
 archaeaASVs <- row.names(archaea)
 
-# subset the OTU object for these ASVs
-archaeaOTU <- OTU %>% filter(rownames(OTU) %in% archaeaASVs)
+# subset the mb_psmelt object for these ASVs
+archaeaOTU <- mb_psmelt %>% filter(OTU %in% archaeaASVs)
+
+# Plot all ASVs 
+# make a OTU label
+archaeaOTU$taxa <- paste(archaeaOTU$Phylum,";", archaeaOTU$Class,";",archaeaOTU$Order, ";",archaeaOTU$Family, ";", archaeaOTU$Genus, ";", archaeaOTU$OTU)
+
+archaeaOTU %>%
+  ggplot()+
+  geom_line(mapping = aes(x = incubation_time_d, y = relAbund, group = OTU, color = taxa)) +
+  geom_point(mapping = aes(x = incubation_time_d, y = relAbund, group = OTU, color = taxa)) +
+  theme_classic()+
+  labs(x = "Incubation Time (days)", y = "Relative Abundance")+
+  ggtitle("All Archaea")+
+  facet_grid(rows = vars(depth), cols = vars(incubation_temp_C))
 
 
-  
+
+
+
+
+# INDICATORS OF THAW
+# Get list of ASVs that are abundant at higher temperatures and at longer time scales
+# Plot mean abundance of individual ASVs over time, color the lines 
+# Add the reads_per_sample to the dataframe for calculating the ASV-level relative abundances
+mb_psmelt <- left_join(mb_psmelt, reads_per_sample, by = "Sample")
+# Calculate the relative abundance
+mb_psmelt$relAbund <- mb_psmelt$Abundance / mb_psmelt$totalReads
+# Pick the top 10 ASVs
+top10ASV <- mb_psmelt %>% group_by(OTU, depth) %>% summarise(sumRelAbund = sum(relAbund))
+top10ASV_US <- top10ASV %>% filter(depth == "US") %>% arrange(desc(sumRelAbund))
+top10ASV_35 <- top10ASV %>% filter(depth == 35) %>% arrange(desc(sumRelAbund))
+top10ASV_54 <- top10ASV %>% filter(depth == 54) %>% arrange(desc(sumRelAbund))
+top10ASV_83 <- top10ASV %>% filter(depth == 83) %>% arrange(desc(sumRelAbund))
+
+# if I take the top 10 in each category, what proportion of the reads am I capturing?
+sum(top10ASV_US$sumRelAbund[1:10])
+sum(top10ASV_35$sumRelAbund[1:10])
+sum(top10ASV_54$sumRelAbund[1:10])
+sum(top10ASV_83$sumRelAbund[1:10])
+
+# get lists of the OTU names for each depth
+US_OTUs <- top10ASV_US$OTU[1:10]
+D35_OTUs <- top10ASV_35$OTU[1:10]
+D54_OTUs <- top10ASV_54$OTU[1:10]
+D83_OTUs <- top10ASV_83$OTU[1:10]
+
+# subset the main dataframe for these OTUs
+US_top10ASVs <- mb_psmelt %>% filter(depth == "US") %>% filter(OTU %in% US_OTUs) 
+# there are not replicates, simply plot the values 
+
+# make a OTU label
+US_top10ASVs$taxa <- paste(US_top10ASVs$Phylum,";", US_top10ASVs$Class,";",US_top10ASVs$Order, ";",US_top10ASVs$Family, ";", US_top10ASVs$Genus, ";", US_top10ASVs$OTU)
+
+US_top10ASVs %>%
+  ggplot()+
+  geom_line(mapping = aes(x = incubation_time_d, y = relAbund, group = OTU, color = taxa)) +
+  geom_point(mapping = aes(x = incubation_time_d, y = relAbund, group = OTU, color = taxa)) +
+  theme_classic()+
+  labs(x = "Incubation Time (days)", y = "Relative Abundance")+
+  ggtitle("Surface Soils")
+
+
+
+# subset the main dataframe for these OTUs
+D35_top10ASVs <- mb_psmelt %>% filter(depth == "35") %>% filter(OTU %in% US_OTUs) 
+# there are not replicates, simply plot the values 
+
+# make a OTU label
+D35_top10ASVs$taxa <- paste(D35_top10ASVs$Phylum,";", D35_top10ASVs$Class,";",D35_top10ASVs$Order, ";",D35_top10ASVs$Family, ";", D35_top10ASVs$Genus, ";", D35_top10ASVs$OTU)
+
+D35_top10ASVs %>%
+  ggplot()+
+  geom_line(mapping = aes(x = incubation_time_d, y = relAbund, group = OTU, color = taxa)) +
+  geom_point(mapping = aes(x = incubation_time_d, y = relAbund, group = OTU, color = taxa)) +
+  theme_classic()+
+  labs(x = "Incubation Time (days)", y = "Relative Abundance")+
+  ggtitle("Depth: 35 m")+
+  facet_grid(cols = vars(incubation_temp_C))
+
+
+
+
+# subset the main dataframe for these OTUs
+D54_top10ASVs <- mb_psmelt %>% filter(depth == "54") %>% filter(OTU %in% US_OTUs) 
+# there are not replicates, simply plot the values 
+
+# make a OTU label
+D54_top10ASVs$taxa <- paste(D54_top10ASVs$Phylum,";", D54_top10ASVs$Class,";",D54_top10ASVs$Order, ";",D54_top10ASVs$Family, ";", D54_top10ASVs$Genus, ";", D54_top10ASVs$OTU)
+
+D54_top10ASVs %>%
+  ggplot()+
+  geom_line(mapping = aes(x = incubation_time_d, y = relAbund, group = OTU, color = taxa)) +
+  geom_point(mapping = aes(x = incubation_time_d, y = relAbund, group = OTU, color = taxa)) +
+  theme_classic()+
+  labs(x = "Incubation Time (days)", y = "Relative Abundance")+
+  ggtitle("Depth: 54 m")+
+  facet_grid(cols = vars(incubation_temp_C))
+
+
+
+# subset the main dataframe for these OTUs
+D83_top10ASVs <- mb_psmelt %>% filter(depth == "83") %>% filter(OTU %in% US_OTUs) 
+# there are not replicates, simply plot the values 
+
+# make a OTU label
+D83_top10ASVs$taxa <- paste(D83_top10ASVs$Phylum,";", D83_top10ASVs$Class,";",D83_top10ASVs$Order, ";",D83_top10ASVs$Family, ";", D83_top10ASVs$Genus, ";", D83_top10ASVs$OTU)
+
+D83_top10ASVs %>%
+  ggplot()+
+  geom_line(mapping = aes(x = incubation_time_d, y = relAbund, group = OTU, color = taxa)) +
+  geom_point(mapping = aes(x = incubation_time_d, y = relAbund, group = OTU, color = taxa)) +
+  theme_classic()+
+  labs(x = "Incubation Time (days)", y = "Relative Abundance")+
+  ggtitle("Depth: 83 m")+
+  facet_grid(cols = vars(incubation_temp_C))
