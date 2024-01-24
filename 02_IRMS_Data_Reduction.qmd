@@ -1,0 +1,148 @@
+---
+title: "IRMS Data Reduction"
+format: html
+editor: visual
+editor_options: 
+  chunk_output_type: console
+---
+
+## How does this work?
+
+1.  **Read and cache.** Our first step is to read in the raw .dxf files that are output from the IRMS instrument. These are large and unwieldy so our goal is to put them into an R-friendly data format. We read them in using the `isoprocessor` package and cache them as a .RDS file.
+
+2.  **Quality control.** Next we remove files that are irrelevant to our analyses. This includes standards runs where we were doing instrument troubleshooting, Argon heating tests, cleaning blanks, etc.
+
+3.  **Export peak table**. Once we have our relevant standards and samples, we want to export them as a peak table such that we can begin our calibration process. This occurs in file `TBD`.
+
+### Terminology
+
+> A note on terminology throughout these scripts:
+>
+> -   `d2H` refers to the isotopic value of deuterium relative to VSMOW, expressed in units of permil.
+>
+> -   `R2H` refers to the isotopic ratio $^2R$ of deuterium
+>
+> -   `F2H` refers to the fractional abundance $^2F$ of deuterium
+>
+> -   `at2H` refers to the fractional abundance $^2F$ expressed in units of atom percent (at. %).
+>
+> The primary measurement for isotopic calculations is `F2H`. For some plots, `at2H` may be used, or `at2H.ppm` (atom fraction in ppm instead of percent) may be used, but these can be calculated on-the-spot in the ggplot with in-line operations.
+>
+> Isodat .dxf files output isotopic data in two formats: d2H in permil vs. VSMOW and at2H (at. %).
+
+## Setup
+
+```{r}
+# the installation of these packages may be required
+# uncomment below to install
+
+#devtools::install_github("isoverse/isoprocessor")
+
+#devtools::install_github("isoverse/isoreader")
+```
+
+Load the required packages
+
+```{r}
+library(tidyverse)
+library(isoprocessor)
+library(isoreader)
+library(isotopia)
+```
+
+### Import IRMS Data
+
+```{r}
+data_paths <- c(
+  "data/GC-IRMS/raw_data/2023-09-05_PermafrostSet1_TAC_AEM/",
+  "data/GC-IRMS/raw_data/2023-09-18_Test_Standards_TAC/",
+  "data/GC-IRMS/raw_data/2023-11-16_TAC-AEM-Permafrost-FAMEs-Enriched/",
+  "data/GC-IRMS/raw_data/2023-11-28_TAC-AEM_New-Reactor-Permafrost-FAMEs-Enriched/"
+  )
+
+# Define VSMOW values for 2R and 2F
+ref_ratio <- get_standard("2H")
+ref_frac <- to_abundance(ref_ratio)
+R2H_VSMOW <- ref_ratio |> as.numeric()
+F2H_VSMOW <- ref_frac |> as.numeric()
+
+
+# this may take a while ....
+  # so we will cache this for faster reading!
+  # read files
+  iso_files_raw <- 
+    # path to data files
+    data_paths %>% 
+    # read data files in parallel for fast read
+    iso_read_continuous_flow() %>%
+    # filter out files with read errors (e.g. from aborted analysis)
+    iso_filter_files_with_problems()
+    
+  # Cache it!
+  write_rds(iso_files_raw, "cache/iso_files_raw.RDS")
+
+
+```
+
+### Process IRMS data
+
+```{r}
+# process IRMS file information
+iso_files <- iso_files_raw |> 
+  # rename key file info columns
+  iso_rename_file_info(
+    analysis = Analysis, 
+    id1 = `Identifier 1`,
+    id2 = `Identifier 2`
+    ) |> 
+  # parse text info into numbers
+  iso_parse_file_info(number = analysis) |> 
+  # process other file information that is specific to the naming conventions
+  # of this particular sequence
+  iso_mutate_file_info(
+    # what is the type of each analysis?
+    type = case_when(
+      str_detect(id1, "[Zz]ero")      ~ "on_off",
+      str_detect(id1, "H3")           ~ "H3_factor",
+      str_detect(id1, "F8")           ~ "F8_std",
+      str_detect(id1, "FH5")           ~ "FH5_std",
+      str_detect(id1, "FSH9")           ~ "FSH9_std",
+      TRUE                            ~ "sample"
+    ),
+    # what was the concentration? (assuming Preparation = concentration or volume)
+    concentration = 
+      ifelse(type == "std",  
+             str_extract(Preparation, "[0-9.]+ ?ng( per |/)uL") %>% 
+               parse_number() %>% iso_double_with_units("ng/uL"),
+             NA),
+    # what folder are the data files in? (assuming folder = sequence)
+    folder = basename(dirname(file_path))
+  ) |> 
+  # focus only on the relevant file info, discarding the rest
+  iso_select_file_info(
+    folder, analysis, file_datetime, id1, type, concentration
+  ) |> 
+iso_set_peak_table_from_isodat_vendor_data_table() |> 
+  # convert units from mV to V for amplitudes and area
+  iso_convert_peak_table_units(V = mV, Vs = mVs)
+```
+
+### Plot an example chromatogram
+
+```{r}
+iso_files[480] %>% # choosing arbitrary file to plot
+iso_plot_continuous_flow_data(
+  # select data and aesthetics
+  data = c(2), color = id1, panel = id1,
+  # zoom in on time interval
+  time_interval = c(550, 1500),
+  # peak labels for all peaks > 2V
+  peak_bounds = TRUE,
+  peak_marker = FALSE,
+  peak_label = iso_format(rt),
+  #peak_label_size = 3,
+  peak_label_filter = analysis == 5685 & amp2 > 1
+) +
+  theme_classic() +
+  theme(strip.background = element_blank())
+```
