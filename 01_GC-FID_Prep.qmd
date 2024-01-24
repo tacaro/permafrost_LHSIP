@@ -250,7 +250,7 @@ FID_samples_combined <- FID_samples |>
       true = TRUE,
       false = FALSE
     ),
-  ) |> view()
+  )
 ```
 
 ## Export Cache and clean environment
@@ -274,7 +274,7 @@ rm(FID_results_F3s)
 ```{r}
 p_F3s <- FID_samples_combined |>
   filter(!`Peak Name` %in% c("21:0", "23:0")) |> 
-  filter(inc_time_d != 180) |> 
+  filter(inc_time_d == 180) |> 
   ggplot(
     aes(
       x = `Peak Name`,
@@ -314,7 +314,7 @@ cowplot::save_plot(
 ```{r}
 p_F2s <- FID_samples_combined |>
   filter(!`Peak Name` %in% c("21:0", "23:0")) |> 
-  filter(inc_time_d != 180) |> 
+  filter(inc_time_d == 180) |> 
   ggplot(
     aes(
       x = `Peak Name`,
