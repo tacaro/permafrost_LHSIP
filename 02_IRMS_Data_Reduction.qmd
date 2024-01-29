@@ -8,11 +8,13 @@ editor_options:
 
 ## How does this work?
 
-1.  **Read and cache.** Our first step is to read in the raw .dxf files that are output from the IRMS instrument. These are large and unwieldy so our goal is to put them into an R-friendly data format. We read them in using the `isoprocessor` package and cache them as a .RDS file.
+1.  **Read and cache.** Our first step is to read in the raw .dxf files that are output from the IRMS instrument. These are large and unwieldy so our goal is to put them into an R-friendly data format. We read them in and do some cleanup using the `isoprocessor` and `isoreader` packages.
 
 2.  **Quality control.** Next we remove files that are irrelevant to our analyses. This includes standards runs where we were doing instrument troubleshooting, Argon heating tests, cleaning blanks, etc.
 
-3.  **Export peak table**. Once we have our relevant standards and samples, we want to export them as a peak table such that we can begin our calibration process. This occurs in file `TBD`.
+3.  **Peak map**. Map compound identifications onto peaks based off of their retention time.
+
+4.  **Export peak table**. Once we have our relevant standards and samples, we want to export them as a peak table such that we can begin our calibration process. This occurs in file `TBD`.
 
 ### Terminology
 
@@ -44,10 +46,16 @@ editor_options:
 Load the required packages
 
 ```{r}
+
+rm(list=ls()) # Clear the environment
+
 library(tidyverse)
 library(isoprocessor)
 library(isoreader)
 library(isotopia)
+
+message("Using isoreader version ", packageVersion("isoreader"))
+message("Using isoprocessor version ", packageVersion("isoprocessor"))
 ```
 
 ### Import IRMS Data
@@ -55,8 +63,6 @@ library(isotopia)
 ```{r}
 data_paths <- c(
   "data/GC-IRMS/raw_data/2023-09-05_PermafrostSet1_TAC_AEM/",
-  "data/GC-IRMS/raw_data/2023-09-18_Test_Standards_TAC/",
-  "data/GC-IRMS/raw_data/2023-11-16_TAC-AEM-Permafrost-FAMEs-Enriched/",
   "data/GC-IRMS/raw_data/2023-11-28_TAC-AEM_New-Reactor-Permafrost-FAMEs-Enriched/"
   )
 
@@ -70,18 +76,26 @@ F2H_VSMOW <- ref_frac |> as.numeric()
 # this may take a while ....
   # so we will cache this for faster reading!
   # read files
-  iso_files_raw <- 
-    # path to data files
-    data_paths %>% 
-    # read data files in parallel for fast read
-    iso_read_continuous_flow() %>%
-    # filter out files with read errors (e.g. from aborted analysis)
-    iso_filter_files_with_problems()
+iso_files_raw <- 
+  # path to data files
+  data_paths |> 
+  # read data files in parallel for fast read
+  iso_read_continuous_flow() |> 
+  # filter out files with read errors (e.g. from aborted analysis)
+  iso_filter_files_with_problems()
     
-  # Cache it!
-  write_rds(iso_files_raw, "cache/iso_files_raw.RDS")
+# Cache it!
+write_rds(iso_files_raw, "cache/iso_files_raw.RDS")
+```
 
+### Import Peak Map and ignored injection list
 
+```{r}
+# this is a map of retention times for specific compounds across injections
+peak_map <- readxl::read_excel(path = "data/GC-IRMS/IRMS_peak_map.xlsx")
+
+# this is a list of analyses to ignore
+ignored_analyses <- readxl::read_excel("data/GC-IRMS/ignored_injection_list.xlsx") |> pull(Analysis)
 ```
 
 ### Process IRMS data
@@ -97,16 +111,19 @@ iso_files <- iso_files_raw |>
     ) |> 
   # parse text info into numbers
   iso_parse_file_info(number = analysis) |> 
-  # process other file information that is specific to the naming conventions
-  # of this particular sequence
   iso_mutate_file_info(
     # what is the type of each analysis?
     type = case_when(
-      str_detect(id1, "[Zz]ero")      ~ "on_off",
-      str_detect(id1, "H3")           ~ "H3_factor",
-      str_detect(id1, "F8")           ~ "F8_std",
-      str_detect(id1, "FH5")           ~ "FH5_std",
-      str_detect(id1, "FSH9")           ~ "FSH9_std",
+      str_detect(file_id, "[Zz]ero")      ~ "on_off",
+      str_detect(file_id, "H3")           ~ "H3_factor",
+      str_detect(file_id, "F8")           ~ "F8_std",
+      str_detect(file_id, "FH_5")           ~ "FH5_std",
+      str_detect(file_id, "FSH_9")           ~ "FSH9_std",
+      str_detect(file_id, "blank")           ~ "blank",
+      str_detect(file_id, "Blank")           ~ "blank",
+      str_detect(file_id, "no inject")           ~ "blank",
+      str_detect(file_id, "cleaning")           ~ "blank",
+      str_detect(file_id, "BAME")           ~ "BAME",
       TRUE                            ~ "sample"
     ),
     # what was the concentration? (assuming Preparation = concentration or volume)
@@ -118,31 +135,102 @@ iso_files <- iso_files_raw |>
     # what folder are the data files in? (assuming folder = sequence)
     folder = basename(dirname(file_path))
   ) |> 
+  iso_filter_files(!type %in% c("blank", "BAME", "H3_factor")) |>
   # focus only on the relevant file info, discarding the rest
-  iso_select_file_info(
-    folder, analysis, file_datetime, id1, type, concentration
-  ) |> 
-iso_set_peak_table_from_isodat_vendor_data_table() |> 
-  # convert units from mV to V for amplitudes and area
-  iso_convert_peak_table_units(V = mV, Vs = mVs)
+  iso_select_file_info(folder, analysis, file_datetime, id1, type, concentration) |> 
+  iso_set_peak_table_from_isodat_vendor_data_table() |> 
+    # convert units from mV to V for amplitudes and area
+    iso_convert_peak_table_units(V = mV, Vs = mVs)
 ```
 
 ### Plot an example chromatogram
 
 ```{r}
-iso_files[480] %>% # choosing arbitrary file to plot
-iso_plot_continuous_flow_data(
-  # select data and aesthetics
-  data = c(2), color = id1, panel = id1,
-  # zoom in on time interval
-  time_interval = c(550, 1500),
-  # peak labels for all peaks > 2V
-  peak_bounds = TRUE,
-  peak_marker = FALSE,
-  peak_label = iso_format(rt),
-  #peak_label_size = 3,
-  peak_label_filter = analysis == 5685 & amp2 > 1
-) +
-  theme_classic() +
-  theme(strip.background = element_blank())
+iso_files[100] |>  # choosing arbitrary file to plot
+  iso_plot_continuous_flow_data(
+    # select data and aesthetics
+    data = c(2), color = id1, panel = id1,
+    # zoom in on time interval
+    time_interval = c(550, 1500),
+    # peak labels for all peaks > 2V
+    peak_bounds = TRUE,
+    peak_marker = FALSE,
+    peak_label = iso_format(rt),
+    #peak_label_size = 3,
+    peak_label_filter = analysis == 5685 & amp2 > 1
+  ) +
+    theme_classic() +
+    theme(strip.background = element_blank())
+```
+
+### Inspect the file info
+
+```{r}
+iso_files |> 
+  iso_get_file_info() |> 
+  select(-file_id, -folder) |> 
+  iso_make_units_explicit() |> 
+  gt::gt() |> 
+  gt::data_color(columns = type, palette = "Set1") 
+```
+
+### Generate peak table and export
+
+```{r}
+iso_peak_table <- iso_files |> 
+  iso_get_peak_table() |> 
+  # remove blanks, BAMEs, and H3s
+  select(file_id, everything()) |> 
+  mutate(
+    Analysis = paste0("BF", str_extract(file_id, "(?<=BF)\\d{5}")),
+    sample_id = str_replace(file_id, "BF\\d+|\\.dxf", ""),
+    sample_id = str_replace(sample_id, ".dxf", ""),
+    sample_id = str_replace(sample_id, "__", ""),
+    rep = if_else(
+      str_detect(file_id, "rep"),
+      true = 2,
+      false = 1
+    )
+  ) |> 
+  select(file_id, Analysis, sample_id, rep, everything()) |> 
+  mutate(
+    type = case_when(
+      str_detect(sample_id, "F8") ~ "F8",
+      str_detect(sample_id, "FH_5") ~ "FH5",
+      str_detect(sample_id, "FSH_9") ~ "FSH9",
+      str_detect(sample_id, "F9") ~ "FSH9",
+      TRUE ~ "sample"
+    )
+  ) |> 
+  filter(!Analysis %in% ignored_analyses) # remove analyses we want to ignore
+
+```
+
+## Map peaks
+
+```{r}
+iso_peak_table_mapped <- iso_peak_table |> 
+  iso_map_peaks(peak_map, map_id = Analysis)
+```
+
+Now we can inspect the mapped peak table
+
+```{r}
+# inspect samples
+iso_peak_table_mapped |> pull(sample_id) |> unique()
+
+# inspect compounds
+iso_peak_table_mapped |> pull(compound) |> unique()
+```
+
+# Export
+
+```{r}
+# write .xlsx to data directory
+iso_peak_table_mapped |> 
+  writexl::write_xlsx(path = "data/GC-IRMS/iso_peak_table_mapped.xlsx")
+
+# write .RDS to cache
+iso_peak_table_mapped |> 
+  write_rds(file = "cache/iso_peak_table_mapped.RDS")
 ```
