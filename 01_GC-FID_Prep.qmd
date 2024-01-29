@@ -23,6 +23,7 @@ Import the required R script for reading default chromeleon export files.
 
 ```{r}
 source("source/read_chromeleon_export.R")
+source("source/rename_FAs.R")
 ```
 
 ### Import metadata
@@ -253,12 +254,40 @@ FID_samples_combined <- FID_samples |>
   )
 ```
 
+# Make a dataset to join with IRMS data
+
+```{r}
+FID_export <- FID_samples |> 
+  mutate(
+    fraction = case_when(
+      fraction == "F2" ~ "glyco-IPL",
+      fraction == "F3" ~ "phospho-IPL"
+    ),
+    # normalize analyte mass to grams of permafrost in extraction (5g)
+    mass_analyte_ng_per_g.FID = mass_analyte_total_ng / 5
+  ) |> 
+  # rename columns to match IRMS dataset for easy joining
+  rename(
+    compound = `Peak Name`,
+    site = core,
+    inc_temp_C = temp,
+    area.FID = Area,
+    rt.FID = `Retention Time`
+  ) |> 
+  select(sample_id, site, inc_temp_C, 
+         fraction, inc_time_d, compound, rt.FID, area.FID, 
+         mass_analyte_ng_per_g.FID) |> 
+  # rename compounds to match putative identification
+  rename_FAs()
+```
+
 ## Export Cache and clean environment
 
 ```{r}
 saveRDS(PAIBE_external_standard, "cache/PAIBE_standard.RDS")
 saveRDS(FID_sample_results, "cache/FID_sample_results.RDS")
 saveRDS(FID_samples, "cache/FID_samples.RDS")
+saveRDS(FID_export, "cache/FID_export.RDS")
 
 # remove some global variables that arent useful anymore
 rm(FID_all_data_F2s)
@@ -268,6 +297,368 @@ rm(FID_results_F3s)
 ```
 
 # Exploratory plots
+
+## Quantification
+
+### 35m
+
+```{r}
+p_35m_phos <- FID_export |> 
+  filter(site == "35m", fraction == "phospho-IPL") |> 
+  # remove standards
+  filter(!compound %in% c("21:0", "23:0")) |> 
+  mutate(n_C = abs(parse_number(compound))) |> 
+  mutate(compound = forcats::fct_reorder(compound, n_C)) |> 
+  mutate(inc_temp_C_str = factor(paste(inc_temp_C, "˚C"), c("-4 ˚C", "4 ˚C", "12 ˚C"))) |> 
+  ggplot(
+    aes(
+      x = inc_time_d,
+      y = mass_analyte_ng_per_g.FID,
+      group = compound,
+      color = compound
+    )
+  ) +
+  geom_point() +
+  geom_line() +
+  ggrepel::geom_text_repel(
+    data = function(df) df |> 
+      filter(inc_time_d == 180, mass_analyte_ng_per_g.FID > 30),
+    aes(
+      label = compound
+    ),
+    color = "black", nudge_x = 40, nudge_y = 10, size = 4
+    ) +
+  coord_cartesian(xlim = c(0, 260)) +
+  scale_x_continuous(breaks = c(0, 7, 30, 180)) +
+  facet_wrap(vars(inc_temp_C_str)) +
+  scale_color_viridis_d(option = "plasma") +
+  labs(
+    x = "Incubation time (days)",
+    y = "Compound mass (ng) per g permafrost",
+    color = "",
+    title = "35m | Phospho-IPL"
+  ) +
+  theme_bw() +
+  theme(
+    axis.text = element_text(color = "black", face = "bold"),
+    strip.text = element_text(color = "white", face = "bold", size = 16),
+    strip.background = element_rect(color = "black", fill = "black"),
+    panel.grid.minor = element_blank(),
+    panel.grid.major.x = element_blank(),
+    panel.grid.major.y = element_line(linetype = "dotted", color = "gray")
+  )
+p_35m_phos
+```
+
+```{r}
+p_35m_gly <- FID_export |> 
+  filter(site == "35m", fraction == "glyco-IPL") |> 
+  # remove standards
+  filter(!compound %in% c("21:0", "23:0")) |> 
+  mutate(n_C = abs(parse_number(compound))) |> 
+  mutate(compound = forcats::fct_reorder(compound, n_C)) |> 
+  mutate(inc_temp_C_str = factor(paste(inc_temp_C, "˚C"), c("-4 ˚C", "4 ˚C", "12 ˚C"))) |> 
+  ggplot(
+    aes(
+      x = inc_time_d,
+      y = mass_analyte_ng_per_g.FID,
+      group = compound,
+      color = compound
+    )
+  ) +
+  geom_point() +
+  geom_line() +
+  ggrepel::geom_text_repel(
+    data = function(df) df |> 
+      filter(inc_time_d == 180, mass_analyte_ng_per_g.FID > 30),
+    aes(
+      label = compound
+    ),
+    color = "black", nudge_x = 40, nudge_y = 10, size = 4
+    ) +
+  coord_cartesian(xlim = c(0, 260)) +
+  scale_x_continuous(breaks = c(0, 7, 30, 180)) +
+  facet_wrap(vars(inc_temp_C_str)) +
+  scale_color_viridis_d(option = "plasma") +
+  labs(
+    x = "Incubation time (days)",
+    y = "Compound mass (ng) per g permafrost",
+    color = "",
+    title = "35m | Glyco-IPL"
+  ) +
+  theme_bw() +
+  theme(
+    axis.text = element_text(color = "black", face = "bold"),
+    strip.text = element_text(color = "white", face = "bold", size = 16),
+    strip.background = element_rect(color = "black", fill = "black"),
+    panel.grid.minor = element_blank(),
+    panel.grid.major.x = element_blank(),
+    panel.grid.major.y = element_line(linetype = "dotted", color = "gray")
+  )
+p_35m_gly
+```
+
+### 54m
+
+```{r}
+p_54m_gly <- FID_export |> 
+  filter(site == "54m", fraction == "glyco-IPL") |> 
+  # remove standards
+  filter(!compound %in% c("21:0", "23:0")) |> 
+  mutate(n_C = abs(parse_number(compound))) |> 
+  mutate(compound = forcats::fct_reorder(compound, n_C)) |> 
+  mutate(inc_temp_C_str = factor(paste(inc_temp_C, "˚C"), c("-4 ˚C", "4 ˚C", "12 ˚C"))) |> 
+  ggplot(
+    aes(
+      x = inc_time_d,
+      y = mass_analyte_ng_per_g.FID,
+      group = compound,
+      color = compound
+    )
+  ) +
+  geom_point() +
+  geom_line() +
+  ggrepel::geom_text_repel(
+    data = function(df) df |> 
+      filter(inc_time_d == 180, mass_analyte_ng_per_g.FID > 40),
+    aes(
+      label = compound
+    ),
+    color = "black", nudge_x = 40, nudge_y = 10, size = 4
+    ) +
+  coord_cartesian(xlim = c(0, 260)) +
+  scale_x_continuous(breaks = c(0, 7, 30, 180)) +
+  facet_wrap(vars(inc_temp_C_str)) +
+  scale_color_viridis_d(option = "plasma") +
+  labs(
+    x = "Incubation time (days)",
+    y = "Compound mass (ng) per g permafrost",
+    color = "",
+    title = "54m | Glyco-IPL"
+  ) +
+  theme_bw() +
+  theme(
+    axis.text = element_text(color = "black", face = "bold"),
+    strip.text = element_text(color = "white", face = "bold", size = 16),
+    strip.background = element_rect(color = "black", fill = "black"),
+    panel.grid.minor = element_blank(),
+    panel.grid.major.x = element_blank(),
+    panel.grid.major.y = element_line(linetype = "dotted", color = "gray")
+  )
+p_54m_gly
+```
+
+```{r}
+p_54m_phos <- FID_export |> 
+  filter(site == "54m", fraction == "phospho-IPL") |> 
+  # remove standards
+  filter(!compound %in% c("21:0", "23:0")) |> 
+  mutate(n_C = abs(parse_number(compound))) |> 
+  mutate(compound = forcats::fct_reorder(compound, n_C)) |> 
+  mutate(inc_temp_C_str = factor(paste(inc_temp_C, "˚C"), c("-4 ˚C", "4 ˚C", "12 ˚C"))) |> 
+  ggplot(
+    aes(
+      x = inc_time_d,
+      y = mass_analyte_ng_per_g.FID,
+      group = compound,
+      color = compound
+    )
+  ) +
+  geom_point() +
+  geom_line() +
+  ggrepel::geom_text_repel(
+    data = function(df) df |> 
+      filter(inc_time_d == 180, mass_analyte_ng_per_g.FID > 40),
+    aes(
+      label = compound
+    ),
+    color = "black", nudge_x = 40, nudge_y = 10, size = 4
+    ) +
+  coord_cartesian(xlim = c(0, 260)) +
+  scale_x_continuous(breaks = c(0, 7, 30, 180)) +
+  facet_wrap(vars(inc_temp_C_str), scales = "free_y") +
+  scale_color_viridis_d(option = "plasma") +
+  labs(
+    x = "Incubation time (days)",
+    y = "Compound mass (ng) per g permafrost",
+    color = "",
+    title = "54m | Phospho-IPL"
+  ) +
+  theme_bw() +
+  theme(
+    axis.text = element_text(color = "black", face = "bold"),
+    strip.text = element_text(color = "white", face = "bold", size = 16),
+    strip.background = element_rect(color = "black", fill = "black"),
+    panel.grid.minor = element_blank(),
+    panel.grid.major.x = element_blank(),
+    panel.grid.major.y = element_line(linetype = "dotted", color = "gray")
+  )
+p_54m_phos
+```
+
+### 83m
+
+```{r}
+p_83m_phos <- FID_export |> 
+  filter(site == "83m", fraction == "phospho-IPL") |> 
+  # remove standards
+  filter(!compound %in% c("21:0", "23:0")) |> 
+  mutate(n_C = abs(parse_number(compound))) |> 
+  mutate(compound = forcats::fct_reorder(compound, n_C)) |> 
+  mutate(inc_temp_C_str = factor(paste(inc_temp_C, "˚C"), c("-4 ˚C", "4 ˚C", "12 ˚C"))) |> 
+  ggplot(
+    aes(
+      x = inc_time_d,
+      y = mass_analyte_ng_per_g.FID,
+      group = compound,
+      color = compound
+    )
+  ) +
+  geom_point() +
+  geom_line() +
+  ggrepel::geom_text_repel(
+    data = function(df) df |> 
+      filter(inc_time_d == 180, mass_analyte_ng_per_g.FID > 40),
+    aes(
+      label = compound
+    ),
+    color = "black", nudge_x = 40, nudge_y = 10, size = 4
+    ) +
+  coord_cartesian(xlim = c(0, 260)) +
+  scale_x_continuous(breaks = c(0, 7, 30, 180)) +
+  facet_wrap(vars(inc_temp_C_str), scales = "free_y") +
+  scale_color_viridis_d(option = "plasma") +
+  labs(
+    x = "Incubation time (days)",
+    y = "Compound mass (ng) per g permafrost",
+    color = "",
+    title = "83m | Phospho-IPL"
+  ) +
+  theme_bw() +
+  theme(
+    axis.text = element_text(color = "black", face = "bold"),
+    strip.text = element_text(color = "white", face = "bold", size = 16),
+    strip.background = element_rect(color = "black", fill = "black"),
+    panel.grid.minor = element_blank(),
+    panel.grid.major.x = element_blank(),
+    panel.grid.major.y = element_line(linetype = "dotted", color = "gray")
+  )
+p_83m_phos
+```
+
+```{r}
+p_83m_gly <- FID_export |> 
+  filter(site == "83m", fraction == "glyco-IPL") |> 
+  # remove standards
+  filter(!compound %in% c("21:0", "23:0")) |> 
+  mutate(n_C = abs(parse_number(compound))) |> 
+  mutate(compound = forcats::fct_reorder(compound, n_C)) |> 
+  mutate(inc_temp_C_str = factor(paste(inc_temp_C, "˚C"), c("-4 ˚C", "4 ˚C", "12 ˚C"))) |> 
+  ggplot(
+    aes(
+      x = inc_time_d,
+      y = mass_analyte_ng_per_g.FID,
+      group = compound,
+      color = compound
+    )
+  ) +
+  geom_point() +
+  geom_line() +
+  ggrepel::geom_text_repel(
+    data = function(df) df |> 
+      filter(inc_time_d == 180, mass_analyte_ng_per_g.FID > 40),
+    aes(
+      label = compound
+    ),
+    color = "black", nudge_x = 40, nudge_y = 10, size = 4
+    ) +
+  coord_cartesian(xlim = c(0, 260)) +
+  scale_x_continuous(breaks = c(0, 7, 30, 180)) +
+  facet_wrap(vars(inc_temp_C_str)) +
+  scale_color_viridis_d(option = "plasma") +
+  labs(
+    x = "Incubation time (days)",
+    y = "Compound mass (ng) per g permafrost",
+    color = "",
+    title = "83m | Glyco-IPL"
+  ) +
+  theme_bw() +
+  theme(
+    axis.text = element_text(color = "black", face = "bold"),
+    strip.text = element_text(color = "white", face = "bold", size = 16),
+    strip.background = element_rect(color = "black", fill = "black"),
+    panel.grid.minor = element_blank(),
+    panel.grid.major.x = element_blank(),
+    panel.grid.major.y = element_line(linetype = "dotted", color = "gray")
+  )
+p_83m_gly
+```
+
+### Save plots
+
+```{r}
+cowplot::save_plot(
+  plot = p_83m_gly,
+  filename = "fig_output/p_83m_gly.png",
+  base_height = 8,
+  base_width = 14
+)
+
+cowplot::save_plot(
+  plot = p_83m_phos,
+  filename = "fig_output/p_83m_phos.png",
+  base_height = 8,
+  base_width = 14
+)
+
+cowplot::save_plot(
+  plot = p_54m_phos,
+  filename = "fig_output/p_54m_phos.png",
+  base_height = 8,
+  base_width = 14
+)
+
+cowplot::save_plot(
+  plot = p_54m_gly,
+  filename = "fig_output/p_54m_gly.png",
+  base_height = 8,
+  base_width = 14
+)
+
+cowplot::save_plot(
+  plot = p_35m_gly,
+  filename = "fig_output/p35m_gly.png",
+  base_height = 8,
+  base_width = 14
+)
+
+cowplot::save_plot(
+  plot = p_35m_phos,
+  filename = "fig_output/p35m_phos.png",
+  base_height = 8,
+  base_width = 14
+)
+```
+
+### PLFA profiles of all the samples?
+
+```{r}
+FID_samples |> 
+  filter(fraction == "F3") |> 
+  filter(core == "35m") |> 
+  filter(!`Peak Name` %in% c("21:0", "23:0", "PAIBE")) |> 
+  ggplot(
+    aes(
+      x = mass_analyte_total_ng,
+      y = `Peak Name`
+    )
+  ) +
+  geom_col() +
+  facet_wrap(vars(core, temp, inc_time_d)) +
+  theme_bw()
+```
+
+## Quantification for IRMS
 
 ### Are the F3 analytes quantifiable?
 
