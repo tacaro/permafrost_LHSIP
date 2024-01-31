@@ -547,8 +547,8 @@ p_83m_phos
 ```
 
 ```{r}
-p_83m_gly <- FID_export |> 
-  filter(site == "83m", fraction == "glyco-IPL") |> 
+pUS_phos <- FID_export |> 
+  filter(site == "US", fraction == "phospho-IPL") |> 
   # remove standards
   filter(!compound %in% c("21:0", "23:0")) |> 
   mutate(n_C = abs(parse_number(compound))) |> 
@@ -591,10 +591,65 @@ p_83m_gly <- FID_export |>
     panel.grid.major.x = element_blank(),
     panel.grid.major.y = element_line(linetype = "dotted", color = "gray")
   )
-p_83m_gly
+pUS_phos
+```
+
+```{r}
+FID_export |> 
+  filter(site == "35m", fraction == "phospho-IPL") |> 
+  # remove standards
+  filter(!compound %in% c("21:0", "23:0")) |> 
+  mutate(n_C = abs(parse_number(compound))) |> 
+  mutate(compound = forcats::fct_reorder(compound, n_C)) |> 
+  mutate(inc_temp_C_str = factor(paste(inc_temp_C, "˚C"), c("-4 ˚C", "4 ˚C", "12 ˚C"))) |> 
+  ggplot(
+    aes(
+      x = inc_time_d,
+      y = mass_analyte_ng_per_g.FID,
+      group = compound,
+      color = compound
+    )
+  ) +
+  geom_point() +
+  geom_line() +
+  ggrepel::geom_text_repel(
+    data = function(df) df |> 
+      filter(inc_time_d == 180, mass_analyte_ng_per_g.FID > 30),
+    aes(
+      label = compound
+    ),
+    color = "black", nudge_x = 40, nudge_y = 10, size = 4
+    ) +
+  coord_cartesian(xlim = c(0, 260)) +
+  scale_x_continuous(breaks = c(0, 7, 30, 180)) +
+  facet_wrap(vars(inc_temp_C_str)) +
+  scale_color_viridis_d(option = "plasma") +
+  labs(
+    x = "Incubation time (days)",
+    y = "Compound mass (ng) per g permafrost",
+    color = "",
+    title = "35m | Phospho-IPL"
+  ) +
+  theme_bw() +
+  theme(
+    axis.text = element_text(color = "black", face = "bold"),
+    strip.text = element_text(color = "white", face = "bold", size = 16),
+    strip.background = element_rect(color = "black", fill = "black"),
+    panel.grid.minor = element_blank(),
+    panel.grid.major.x = element_blank(),
+    panel.grid.major.y = element_line(linetype = "dotted", color = "gray")
+  )
 ```
 
 ### Save plots
+
+```{r}
+cowplot::plot_grid(
+  p_35m_phos, p_35m_gly,
+  p_54m_phos, p_54m_gly,
+  p_83m_phos, p_83m_gly
+)
+```
 
 ```{r}
 cowplot::save_plot(
