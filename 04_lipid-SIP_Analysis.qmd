@@ -208,12 +208,16 @@ p_fox_F2H <- growth_data |>
   #              width = 0.8,
   #              outlier.shape = NA) +
   #geom_line() +
-  facet_wrap(vars(site, as.factor(inc_temp_C))) +
+  facet_grid(site~as.factor(inc_temp_C)) +
   labs(
     x = "Incubation time (days)",
     y = latex2exp::TeX("$\\delta^{2}H_{VSMOW}$")
   ) +
-  theme_bw()
+  theme_bw() +
+  theme(
+    strip.text = element_text(color = "white", face = "bold"),
+    strip.background = element_rect(color = "black", fill = "black")
+  )
 p_fox_F2H
 
 # anomalously high d2H is probably an area effect. future data calibration/scrubbing will most likely remove these!
@@ -324,7 +328,6 @@ p_fox_subsurface_u_d <- growth_data |>
   filter(site != "Surface") |> 
   filter(!is.na(site)) |> 
   filter(inc_time_d == 30) |> # only look at 30 day incubations!
-  filter(fraction == "phospho-IPL") |> 
   filter(!is.na(u_d)) |> 
   mutate(inc_time_d_str = factor(paste(inc_time_d, "days"), 
                                  levels = c("7 days", "30 days")),
@@ -334,7 +337,7 @@ p_fox_subsurface_u_d <- growth_data |>
     x = u_d,
     y = compound,
     color = as.factor(inc_temp_C),
-    shape = as.factor(inc_temp_C)
+    shape = fraction
   ) +
   geom_segment(
     aes(yend = compound),
@@ -441,7 +444,7 @@ p_surface_u_d_abund <- growth_w_FID |>
   filter(site == "Surface") |> 
   mutate(inc_temp_C_str = factor(paste(inc_temp_C, "˚C"), c("-4 ˚C", "4 ˚C", "12 ˚C"))) |> 
   mutate(inc_time_d_str = factor(paste(inc_time_d, "days"), c("7 days", "30 days", "180 days"))) |> 
-  filter(inc_time_d != 0) |> 
+  filter(inc_time_d == 30) |> 
   ggplot(
     aes(
       x = mass_analyte_ng_per_g.FID,
