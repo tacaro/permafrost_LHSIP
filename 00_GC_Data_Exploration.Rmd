@@ -424,11 +424,31 @@ gc_samples_processed <- gc_samples_w_dt |>
 
 # Exploratory plots
 
-Timeseries
+## Peak area
+
+```{r}
+gc_samples_processed |> 
+  filter(gas == "CH4") |> 
+  #filter(inc_time.d != 180) |> 
+  ggplot(
+    aes(x = dt.d,
+        y = peak_area / sample_volume,
+        group = sample_id,
+        color = as.factor(temp),
+        shape = inc_time.d
+        )
+  ) +
+  geom_point() +
+  geom_line() +
+  facet_wrap(vars(site), scale = "free_y") +
+  scale_color_viridis_d(end = 0.9, option = "magma")
+```
+
+## Timeseries nmol
 
 ```{r}
 p_co2 <- gc_samples_processed |> 
-  filter(inc_time.d == 30) |> 
+  filter(inc_time.d == 180) |> 
   filter(gas == "CO2") |> 
   ggplot() +
   aes(
@@ -457,7 +477,7 @@ p_co2 <- gc_samples_processed |>
 p_co2
 
 p_ch4 <- gc_samples_processed |> 
-  filter(inc_time.d == 180) |> 
+  filter(inc_time.d == 30) |> 
   filter(gas == "CH4") |> 
   ggplot() +
   aes(
