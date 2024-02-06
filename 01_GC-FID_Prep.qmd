@@ -42,7 +42,7 @@ FID_sample_metadata <- readxl::read_excel("data/sample_matrix.xlsx") |>
 ### Standards Import and Cleanup
 
 ```{r}
-root <- file.path("data", "GC-FID_Data", "2023-08-11_TAC_PAIBE_Standards/")
+root <- file.path("data", "GC-FID_Data", "2023-08-28_TAC_PAIBE-External-Standard-Curve/")
 
 file_list = list.files(path = root)
 file_list <- file_list |> 
@@ -79,7 +79,7 @@ PAIBE_external_standard <- FID_results_stds |>
     PAIBE_amount_ng = abs(parse_number(sample))
   )
 
-PAIBE_external_standard |> 
+p_PAIBE_inset <- PAIBE_external_standard |> 
   ggplot(
     aes(
       x = Area,
@@ -87,8 +87,31 @@ PAIBE_external_standard |>
     )
   ) +
   geom_point() +
-  stat_poly_line() +
+  stat_poly_line(linewidth = 0.25) +
+  #stat_poly_eq(use_label(c("eq", "R2"))) +
+  coord_cartesian(xlim = c(0, 20), ylim = c(0, 100)) +
+  theme_bw() +
+  theme(panel.grid.minor = element_blank(),
+        axis.title = element_blank(),
+        panel.grid = element_blank(),
+        plot.background = element_rect(color = "black"),
+        aspect.ratio =1) +
+  labs(
+    y = "PAIBE mass injected (ng)",
+    x = "Peak Area (pA*min)"
+  )
+
+p_PAIBE_large <- PAIBE_external_standard |> 
+  ggplot(
+    aes(
+      x = Area,
+      y = PAIBE_amount_ng
+    )
+  ) +
+  geom_point() +
+  stat_poly_line(linewidth = 0.25) +
   stat_poly_eq(use_label(c("eq", "R2"))) +
+  #coord_cartesian(xlim = c(0,100), ylim = c(0, 25)) +
   theme_bw() +
   theme(panel.grid.minor = element_blank()) +
   labs(
@@ -96,6 +119,23 @@ PAIBE_external_standard |>
     x = "Peak Area (pA*min)"
   )
 
+p_PAIBE_combined <- p_PAIBE_large +
+  cowplot::draw_plot(p_PAIBE_inset, x = 47, y = 0, width = 40, height = 200) +
+  labs(title = "PAIBE External Standard Curve") +
+  theme(aspect.ratio = 1)
+p_PAIBE_combined
+
+# save the plot
+cowplot::save_plot(filename = "fig_output/PAIBE_std_curve.pdf",
+                   plot = p_PAIBE_combined,
+                   base_height = 6,
+                   base_width = 6)
+
+```
+
+### Calculate standard curve
+
+```{r}
 PAIBE_fit <- ols(data = PAIBE_external_standard, PAIBE_amount_ng ~ Area)
 peak_area_to_ng <- Function(PAIBE_fit)
 ```
@@ -166,7 +206,7 @@ FID_results_F3s <- FID_all_data_F3s |>
   filter(nchar(`Peak Name`) > 0)
 ```
 
-### Join the sample datasetes
+### Join the sample datasetes and calculate analyte mass
 
 ```{r}
 FID_sample_results <- FID_results_F2s |> 
@@ -254,6 +294,7 @@ FID_samples_combined <- FID_samples |>
   )
 ```
 
+<<<<<<< Updated upstream
 # Make a dataset to join with IRMS data
 
 ```{r}
@@ -279,6 +320,102 @@ FID_export <- FID_samples |>
          mass_analyte_ng_per_g.FID) |> 
   # rename compounds to match putative identification
   rename_FAs()
+=======
+## Calculate Extraction/Derivitization Efficiency
+
+Both extraction and derivatization efficiency are reported as yield fractions (not percent yields).
+
+Calculate derivatization efficiency for both F3s and F2s by dividing the initial 21PC quantity by the estimated ng based on peak area.
+
+```{r}
+# 21:0 PC (Derivatization Efficiency)
+FID_21PC <- FID_samples |> 
+  filter(`Peak Name` == "21:0") |> 
+  select(sample, `Peak Name`, mass_analyte_total_ng, core, temp, inc_time_d) |> 
+  rename(mass_21PC_ng = mass_analyte_total_ng) |> 
+  mutate(initial_21PC_ng = 10000) |> 
+  mutate(deriv_efficiency = mass_21PC_ng / initial_21PC_ng)
+  
+```
+
+Calculate extraction efficiency for *only F3s* by dividing initial 23PC quantity by the estimated ng based on peak area. We do not do this for F2s because 23PC is removed from F2s during the silica chromatography step. The mean extraction efficiency for F3s will be applied to the F2s.
+
+```{r}
+# 23:0 PC (Extraction Efficiency)
+FID_23PC <- FID_samples |> 
+  filter(fraction == "F3", `Peak Name` == "23:0") |> 
+  select(sample, `Peak Name`, mass_analyte_total_ng, core, temp, inc_time_d) |> 
+  rename(mass_23PC_ng = mass_analyte_total_ng) |> 
+  mutate(initial_23PC_ng = 50000) |> 
+  mutate(extraction_efficiency = mass_23PC_ng / initial_23PC_ng)
+```
+
+Plot the extraction and derivatization efficiency
+
+```{r}
+FID_23PC |> 
+  ggplot(
+    aes(
+      x = core,
+      y = extraction_efficiency,
+      color = as.factor(temp)
+    )
+  ) +
+  geom_point() +
+  #geom_boxplot() +
+  lemon::facet_rep_wrap(vars(inc_time_d)) +
+  coord_cartesian(ylim = c(0, .20)) +
+  scale_y_continuous(labels = scales::label_percent(),
+                     breaks = c(0, .05, .10, .15, .2),
+                     sec.axis = dup_axis()) +
+  scale_color_manual(values = c("#f5a607", "#0772f5", "#f50747")) +
+  labs(x = "",
+       y = "Extraction Efficiency",
+       color = "Incubation Temperature (C)") +
+  theme_bw() +
+  theme(
+    legend.position= "bottom",
+    strip.background = element_rect(fill = "black"),
+    strip.text = element_text(color = "white"),
+    axis.ticks = element_line(color = "black"),
+    axis.ticks.length = unit(-2.75, "pt"),
+    axis.title.y.right = element_blank(),
+    axis.text.y.right = element_blank()
+    )
+
+
+```
+
+```{r}
+FID_21PC |> 
+  ggplot(
+    aes(
+      x = core,
+      y = deriv_efficiency,
+      color = as.factor(temp)
+    )
+  ) +
+  geom_point() +
+  #geom_boxplot() +
+  lemon::facet_rep_wrap(vars(inc_time_d)) +
+  scale_y_continuous(labels = scales::label_percent(),
+                     sec.axis = dup_axis()) +
+  scale_color_manual(values = c("#f5a607", "#0772f5", "#f50747")) +
+  coord_cartesian(ylim = c(0, 1)) +
+  labs(x = "",
+       y = "Derivatization Efficiency",
+       color = "Incubation Temperature (C)") +
+  theme_bw() +
+  theme(
+    legend.position= "bottom",
+    strip.background = element_rect(fill = "black"),
+    strip.text = element_text(color = "white"),
+    axis.ticks = element_line(color = "black"),
+    axis.ticks.length = unit(-2.75, "pt"),
+    axis.title.y.right = element_blank(),
+    axis.text.y.right = element_blank()
+    )
+>>>>>>> Stashed changes
 ```
 
 ## Export Cache and clean environment
@@ -289,8 +426,9 @@ saveRDS(FID_sample_results, "cache/FID_sample_results.RDS")
 saveRDS(FID_samples, "cache/FID_samples.RDS")
 saveRDS(FID_export, "cache/FID_export.RDS")
 
-# remove some global variables that arent useful anymore
+# remove some global variables that arent useful for plotting
 rm(FID_all_data_F2s)
+rm(FID_results_F2s)
 rm(FID_all_data_F3s)
 rm(FID_results_F3s)
 #rm(FID_sample_results)
@@ -728,11 +866,11 @@ p_F3s <- FID_samples_combined |>
       fill = quantifiable_F3
     )
   ) +
+  geom_hline(yintercept = 150, color = "red") +
   geom_col() +
   scale_fill_manual(values = c("black", "#9713f0")) +
   #geom_point(aes(shape = quantifiable_F3)) +
   facet_grid(vars(core, temp), vars(inc_time_d), scales = "free_y") +
-  geom_hline(yintercept = 150, color = "red") +
   theme_bw() +
   labs(
     title = "F3 (Phospholipids) Quantification",
@@ -768,10 +906,10 @@ p_F2s <- FID_samples_combined |>
       fill = quantifiable_F2
     )
   ) +
+  geom_hline(yintercept = 150, color = "red") +
   geom_col() +
   scale_fill_manual(values = c("black", "#21918a")) +
   facet_grid(vars(core, temp), vars(inc_time_d), scales = "free_y") +
-  geom_hline(yintercept = 150, color = "red") +
   labs(
     y = "Total Analyte Mass (ng)",
     title = "F2 (Glycolipids) Quantification"
@@ -812,17 +950,18 @@ p_combined <- FID_samples_combined |>
       fill = fraction
     )
   ) +
+  geom_hline(yintercept = 150, color = "red") +
   geom_col() +
   geom_point(
     aes(
       y = combined_sample_mass_ng,
       shape = quantifiable_combined
-    )
+    ),
+    size = 0.5
   ) +
   scale_shape_manual(values = c(NA, 8)) +
   facet_grid(vars(core, temp), vars(inc_time_d), scales = "free_y") +
   scale_fill_manual(values = c("#21918a", "#9713f0")) +
-  geom_hline(yintercept = 150, color = "red") +
   labs(title = "Combined F2 + F3") +
   theme_bw() +
   theme(
@@ -835,6 +974,7 @@ p_combined <- FID_samples_combined |>
     shape = "none",
     color = "none"
   )
+p_combined
 
 cowplot::save_plot(
   plot = p_combined,
