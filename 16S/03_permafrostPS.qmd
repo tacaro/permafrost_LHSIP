@@ -1,0 +1,102 @@
+---
+title: "03.permafrostPS"
+format: html
+editor: visual
+editor_options: 
+  chunk_output_type: console
+---
+
+## Setup
+
+```{r}
+library(phyloseq)
+library(tidyverse)
+library(microViz)
+```
+
+## Read in data
+
+```{r}
+ps <- readRDS("permafrost16S_processed_filt_ps.rds")
+```
+
+## Construct metadata
+
+```{r}
+metadata <- tibble(
+  site = c("35m", "54m", "83m", "US")
+) |> 
+  crossing(
+    inc_temp_C = c(-4, 4, 12),
+    inc_time_d = c(0, 7, 30, 180)
+  ) |> 
+  mutate(
+    sample_id = paste0("p", site, ".", inc_temp_C, "C.", inc_time_d, "d")
+  ) |> 
+  filter(
+    !(site == "US" & inc_temp_C %in% c(-4, 4))
+  ) |> 
+  mutate(
+    sample_id = as.factor(sample_id)
+  )
+```
+
+## Construct PS components
+
+```{r}
+# convert the seq_tab file to an 'otu_table' phyloseq component
+asv_table <- phyloseq::otu_table(seq_tab, taxa_are_rows = TRUE)
+
+# convert the taxtable file to a 'TaxonomyTable' phyloseq component
+taxonomy_table <- phyloseq::tax_table(seq_tab)
+
+# convert metadata into a 'sample_data' phyloseq component
+sample_vars <- phyloseq::sample_data(metadata)
+
+```
+
+```{r}
+p_ps1 <- ps |> 
+  tax_fix() |> 
+  # convert DiseaseState into ordered factor to control order of facets
+  ps_mutate(
+    incubation_temp_C = factor(incubation_temp_C, levels = c(-4, 4, 12)),
+    incubation_time_d = factor(incubation_time_d, levels = c(180, 30, 7, 0))
+  ) |>  
+  ps_filter(!is.na(depth)) |> 
+  #tax_agg("Genus") |> 
+  comp_barplot(tax_level = "Genus",
+               x = "incubation_time_d",
+               n_taxa = 40,
+               ) +
+  coord_flip() +
+  facet_grid(vars(depth, incubation_temp_C)) +
+  labs(x = "Incubation time (days)") +
+  theme(
+  )
+p_ps1
+
+cowplot::save_plot(filename = "output/p_ps1.pdf", plot = p_ps1, base_height = 8, base_width = 14)
+  
+```
+
+## Subset the archaea
+
+```{r}
+ps.archaea <- ps |> tax_select(tax_list = "Archaea")
+  
+```
+
+```{r}
+ps.archaea |> 
+  tax_fix() |> 
+  comp_barplot(tax_level = "Genus",
+               x = "incubation_time_d",
+               n_taxa = 40,
+               ) +
+  coord_flip() +
+  facet_grid(vars(depth, incubation_temp_C)) +
+  theme(
+
+  )
+```
