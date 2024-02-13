@@ -294,8 +294,7 @@ FID_samples_combined <- FID_samples |>
   )
 ```
 
-<<<<<<< Updated upstream
-# Make a dataset to join with IRMS data
+\<\<\<\<\<\<\< Updated upstream \# Make a dataset to join with IRMS data
 
 ```{r}
 FID_export <- FID_samples |> 
@@ -327,7 +326,6 @@ Both extraction and derivatization efficiency are reported as yield fractions (n
 
 Calculate derivatization efficiency for both F3s and F2s by dividing the initial 21PC quantity by the estimated ng based on peak area.
 
-```{r}
 # 21:0 PC (Derivatization Efficiency)
 FID_21PC <- FID_samples |> 
   filter(`Peak Name` == "21:0") |> 
