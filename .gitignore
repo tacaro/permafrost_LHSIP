@@ -5,4 +5,4 @@
 .DS_Store
 fig_output/*
 cache/*
-data/GC-IRMS/*
+#data/GC-IRMS/*
