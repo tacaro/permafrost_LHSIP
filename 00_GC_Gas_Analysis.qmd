@@ -1,0 +1,271 @@
+---
+title: "GC Gas Data Analysis"
+format: html
+editor: visual
+editor_options: 
+  chunk_output_type: console
+---
+
+## Libraries
+
+```{r}
+library(tidyverse)  # CRAN v2.0.0
+library(lubridate)  # CRAN v1.9.3
+
+```
+
+## Load data
+
+GC Data
+
+```{r}
+# Load GC raw data
+gc <- read_csv("data/GC_Data_Table.csv") |> 
+  select(-c(`...1`)) |> # remove this trash column
+  rename(gc_sample_id = sample_type) |> 
+  # fix mislabeled gas name
+  mutate(
+    gas = case_when(
+      gas == "C02" ~ "CO2",
+      TRUE ~ gas
+    ),
+    # fix incorrectly entered date formats
+    file_name = str_replace(file_name, pattern = "Sept", replacement = "SEP"),
+    file_name = str_replace(file_name, pattern = "Apr", replacement = "APR"),
+    # Extract the analysis date from file name
+    analysis_date = str_extract(file_name, "\\d{2}[A-Z]{3}\\d{2}"),
+    # Convert to date
+    analysis_date = as_date(analysis_date, format = "%d%b%y")
+  )
+
+
+```
+
+Sample metadata
+
+```{r}
+# load sample_matrix metadata
+sample_metadata <- read_csv("data/sample_matrix.csv") |> 
+  # find number of days elapsed at GC timepoint
+  mutate(
+    inc_start_date = as.Date(inc_start_date, format = "%d-%b-%y"),
+    GC_T1 = as_date(GC_T1, format = "%d-%b-%y"),
+    GC_T2 = as_date(GC_T2, format = "%d-%b-%y"),
+    GC_T3 = as_date(GC_T3, format = "%d-%b-%y"),
+    GC_T4 = as_date(GC_T4, format = "%d-%b-%y"),
+    inc_end_date = as.Date(inc_end_date, format = "%d-%b-%y"),
+    saline_Ti = as_date(saline_Ti, format = "%d-%b-%y"),
+    saline_Tf = as_date(saline_Tf, format = "%d-%b-%y"),
+    frozen = as_date(frozen, format = "%d-%b-%y"),
+    decanted = as_date(decanted, format = "%d-%b-%y"),
+  ) |>
+  mutate(
+    dt1 = difftime(GC_T1, inc_start_date, units = "days"),
+    dt2 = difftime(GC_T2, inc_start_date, units = "days"),
+    dt3 = difftime(GC_T3, inc_start_date, units = "days"),
+    dt4 = difftime(GC_T4, inc_start_date, units = "days"),
+  )
+
+```
+
+Bad GC injections
+
+```{r}
+# load list of bad gc standards injections
+bad_gc_list <- readxl::read_excel("data/bad_gc_list.xlsx") |> pull(file_name)
+```
+
+Separate standards from samples
+
+```{r}
+gc_standards <- gc |> 
+  filter(str_detect(gc_sample_id, "mix")) |> 
+  mutate(
+    sample_volume = as.numeric(str_extract(gc_sample_id, "\\d+(\\.\\d+)?(?=ml)"))
+  ) |> 
+  filter(sample_volume != 1) |> 
+  filter(!file_name %in% bad_gc_list) |> 
+  rename(volume.ml = sample_volume)
+```
+
+# Calibrate
+
+Create a standard calibration for 1% gas mix. Here, for any volume of gas mix injected, we can back out the number of moles that the GC "saw" during the injection using the ideal gas law:
+
+$$
+n = \frac{PV}{RT}
+$$
+
+```{r}
+calibration <- tibble(
+  condition = c("0.25 ml 1% gas mix", "0.5 ml 1% gas mix", "0.75 ml 1% gas mix")
+) |> 
+  mutate(
+    gas_mix_pressure.psia = 12.2,
+    individual_gas_partial_pressure.psia = gas_mix_pressure.psia * .01,
+    individual_gas_partial_pressure.atm = individual_gas_partial_pressure.psia / 14.69594861,
+    volume.ml = c(0.25, 0.5, 0.75),
+    volume.L = volume.ml / 1000,
+    R.L.atm_mol.K = 0.082057338,
+    temp_K = 298.15,
+    mol = (individual_gas_partial_pressure.atm * volume.L) / (R.L.atm_mol.K * temp_K),
+    nmol = mol * 1e9
+  )
+
+
+calibration |> gt::gt()
+```
+
+```{r}
+gc_std_clean <- gc_standards |> 
+  filter(gas != "CO") |> 
+  select(gas, peak_area, volume.ml, analysis_date, file_name) |> 
+  left_join(
+    calibration |> select(mol, volume.ml), by = "volume.ml"
+  ) |> 
+  mutate(nmol = mol * 1e9)
+```
+
+```{r}
+gc_std_clean |> 
+  ggplot(
+    aes(x = nmol, y = peak_area, label = file_name)
+  ) +
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE) +
+  facet_wrap(vars(gas))
+
+```
+
+Now we can generate an equation for calculating peak area to nmol of gas:
+
+```{r}
+CO2_calibration <- gc_std_clean |> filter(gas == "CO2")
+CH4_calibration <- gc_std_clean |> filter(gas == "CH4")
+
+CO2_fit <- lm(CO2_calibration$nmol~CO2_calibration$peak_area)
+CH4_fit <- lm(CH4_calibration$nmol~CH4_calibration$peak_area)
+
+CH4_slope <- CH4_fit |> pluck(1,2)
+CH4_int <- CH4_fit |> pluck(1,1)
+CH4_SE <- CH4_fit |> broom::tidy() |> 
+  filter(term == "CH4_calibration$peak_area") |> pull(std.error)
+
+CO2_slope <- CO2_fit |> pluck(1, 2)
+CO2_int <- CO2_fit |> pluck(1, 1)
+CO2_SE <- CO2_fit |> broom::tidy() |> 
+  filter(term == "CO2_calibration$peak_area") |> pull(std.error)
+
+# A function to calculate the estimated nmol
+peak_area_to_nmol <- function(gas, peak_area, limit = NA) {
+  nmol = NA
+  
+  if (is.na(limit)) {
+    nmol = case_when(
+    gas == "CH4" ~ (peak_area * CH4_slope) + CH4_int,
+    gas == "CO2" ~ (peak_area * CO2_slope) + CO2_int
+  )
+  } else if (limit == "upper") {
+    nmol = case_when(
+      gas == "CH4" ~ (peak_area * (CH4_slope + CH4_SE)) + CH4_int,
+      gas == "CO2" ~ (peak_area * (CO2_slope + CO2_SE)) + CO2_int
+    )
+  } else if (limit == "lower") {
+    nmol = case_when(
+    gas == "CH4" ~ (peak_area * (CH4_slope - CH4_SE)) + CH4_int,
+    gas == "CO2" ~ (peak_area * (CO2_slope - CO2_SE)) + CO2_int
+    )
+  } else {
+    message("Incorrect function arguments, returning NA")
+  }
+  return(nmol)
+}
+
+# Test it:
+peak_area_to_nmol(gas = "CH4", peak_area = 25000)
+peak_area_to_nmol(gas = "CH4", peak_area = 25000, limit = "upper")
+peak_area_to_nmol(gas = "CH4", peak_area = 25000, limit = "lower")
+
+peak_area_to_nmol(gas = "CO2", peak_area = 25000)
+peak_area_to_nmol(gas = "CO2", peak_area = 25000, limit = "upper")
+peak_area_to_nmol(gas = "CO2", peak_area = 25000, limit = "lower")
+
+# These return NA:
+peak_area_to_nmol(gas = "O2", peak_area = 25000)
+peak_area_to_nmol(gas = "O2", peak_area = 25000, limit = "lower")
+```
+
+# Calculate
+
+Now that we have our standard curves, we can apply our calibration to the experimental dataset:
+
+```{r}
+gc_samples <- gc |> 
+  select(-c(retention_time, peak_height, correction_factor, column, carrier)) |> 
+  # filter out non-samples or bad injections
+  filter(!str_detect(gc_sample_id, "mix")) |> 
+  filter(!str_detect(gc_sample_id, "Mix")) |> 
+  filter(!str_detect(gc_sample_id, "blank")) |> 
+  filter(!str_detect(gc_sample_id, "Blank")) |> 
+  filter(!str_detect(gc_sample_id, "NT")) |> 
+  filter(!str_detect(gc_sample_id, "failed")) |> 
+  filter(!str_detect(gc_sample_id, "tank")) |> 
+  filter(!str_detect(gc_sample_id, "lab")) |> 
+  filter(!file_name %in% bad_gc_list) |> 
+  # we don't care about carbon monoxide
+  filter(gas != "CO") |> 
+  mutate(
+    volume.ml = as.numeric(str_extract(gc_sample_id, "\\d+(\\.\\d+)?(?=ml)")),
+    nmol = peak_area_to_nmol(gas = gas, peak_area = peak_area),
+    nmol.upper = peak_area_to_nmol(gas = gas, peak_area = peak_area, 
+                                   limit = "upper"),
+    nmol.lower = peak_area_to_nmol(gas = gas, peak_area = peak_area, 
+                                   limit = "lower"),
+    nmol_per_ml = nmol / volume.ml,
+    nmol_per_ml.upper = nmol.upper / volume.ml,
+    nmol_per_ml.lower = nmol.lower / volume.ml
+  ) |> 
+  # parse metadata from unique file string
+  mutate(
+    inc_temp_C = parse_number(str_extract(gc_sample_id, pattern = "\\((.*?)\\)")),
+    site = case_when(
+      str_detect(gc_sample_id, "p35") ~ "35m",
+      str_detect(gc_sample_id, "p54") ~ "54m",
+      str_detect(gc_sample_id, "p83") ~ "83m",
+      str_detect(gc_sample_id, "pUS") ~ "Surface",
+    ),
+    inc_time_d = case_when(
+      str_detect(gc_sample_id, "7d") ~ 7,
+      str_detect(gc_sample_id, "30d") ~ 30,
+      str_detect(gc_sample_id, "180d") ~ 180,
+    )
+  )
+```
+
+Inspect for correct parsing
+
+```{r}
+gc_samples |> 
+  select(file_name, gc_sample_id, site, inc_temp_C, inc_time_d) |> 
+  arrange(site, inc_temp_C) |> 
+  gt::gt() |> 
+  gt::data_color(columns = site, palette = "Blues") |> 
+  gt::data_color(columns = inc_temp_C, palette = "Reds") |> 
+  gt::data_color(columns = inc_time_d, palette = "Greens")
+```
+
+```{r}
+gc_samples |> 
+  ggplot(
+    aes(
+      x = analysis_date,
+      y = nmol_per_ml,
+      color = site,
+      shape = as.character(inc_temp_C)
+    )
+  ) +
+  geom_point() +
+  #geom_line() +
+  facet_wrap(vars(inc_time_d), scales = "free_x") +
+  theme_bw()
+```
