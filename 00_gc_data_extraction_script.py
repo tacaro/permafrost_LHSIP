@@ -5,7 +5,7 @@ import os
 
 # FUNCTION DEFINITION
 
-def read_GC_RES_file(file_name):
+def read_GC_RES_file(file_name, file_num):
     print("Reading file path: " + file_name)
 
     with open(file_name) as file:
@@ -46,6 +46,7 @@ def read_GC_RES_file(file_name):
         data_array = data_array[:,:5]
         # Write the relevant metadata
         df = pd.DataFrame(data_array, columns=['gas','retention_time','peak_area','peak_height','correction_factor'])
+        df['file_number'] = file_num
         df['file_name'] = file_name.replace('\n', '') # add the file name, removing newlines
         df['sample_type'] = sample_type.replace('\n', '') # add the sample type (entered manually in program), removing newlines
         df['column'] = column.replace('\n', '') # add column info, removing newlines
@@ -61,17 +62,19 @@ def read_GC_RES_file(file_name):
 
 # EXECUTE
 
-GC_file_directory = "data/GC_Data/Feb/" # If your GC data is not in a file like this, change this string!
+GC_file_directory = "data/GC_Data/raw_data/" # If your GC data is not in a file like this, change this string!
 GC_files = [f for f in os.listdir(GC_file_directory) if f.endswith(".RES") and "FID" in f]
 
 appended_data = []
 
+n = 1
 for res in GC_files:
-    data = read_GC_RES_file(GC_file_directory + res)
+    data = read_GC_RES_file(GC_file_directory + res, file_num = n)
+    n = n + 1
     # store DataFrame in a list
     appended_data.append(data)
 
 # See pd.concat documentation for more info on this operation
 appended_data = pd.concat(appended_data)
 # write DataFrame to csv
-appended_data.to_csv("data/GC_Data_Table.csv")
+appended_data.to_csv("data/GC_Data/GC_Data_Table3.csv")
