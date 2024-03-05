@@ -9,94 +9,103 @@ editor_options:
 ## Setup
 
 ```{r}
-library(phyloseq)
-library(tidyverse)
-library(microViz)
+library(phyloseq) # Handling and analysis of high-throughput microbiome census data, Bioconductor v1.46.0
+library(tidyverse) # Easily Install and Load the 'Tidyverse', CRAN v2.0.0
+library(microViz) # Microbiome Data Analysis and Visualization, [::david-barnett/microViz] v0.12.1
+
 ```
 
-## Read in data
+## Load PS object
 
 ```{r}
 ps <- readRDS("permafrost16S_processed_filt_ps.rds")
+
+# Validate the PS object
+phyloseq_validate(ps)
+
+# 
 ```
 
-## Construct metadata
+phyloseq checks that your sample and taxa names are consistent across the different slots of the phyloseq object. microViz provides [`phyloseq_validate()`](https://david-barnett.github.io/microViz/reference/phyloseq_validate.html) to check for and fix other possible problems with your phyloseq that might cause problems in later analyses. It is recommended to run this at the start of your analyses, and fix any problems identified.
 
 ```{r}
-metadata <- tibble(
-  site = c("35m", "54m", "83m", "US")
-) |> 
-  crossing(
-    inc_temp_C = c(-4, 4, 12),
-    inc_time_d = c(0, 7, 30, 180)
-  ) |> 
-  mutate(
-    sample_id = paste0("p", site, ".", inc_temp_C, "C.", inc_time_d, "d")
-  ) |> 
-  filter(
-    !(site == "US" & inc_temp_C %in% c(-4, 4))
-  ) |> 
-  mutate(
-    sample_id = as.factor(sample_id)
-  )
+ps <- tax_fix(ps)
+
+# Validate the PS object
+phyloseq_validate(ps)
 ```
 
-## Construct PS components
+### Separate blanks from samples
 
 ```{r}
-# convert the seq_tab file to an 'otu_table' phyloseq component
-asv_table <- phyloseq::otu_table(seq_tab, taxa_are_rows = TRUE)
-
-# convert the taxtable file to a 'TaxonomyTable' phyloseq component
-taxonomy_table <- phyloseq::tax_table(seq_tab)
-
-# convert metadata into a 'sample_data' phyloseq component
-sample_vars <- phyloseq::sample_data(metadata)
-
-```
-
-```{r}
-p_ps1 <- ps |> 
-  tax_fix() |> 
-  # convert DiseaseState into ordered factor to control order of facets
+ps.samples <- ps |> 
   ps_mutate(
     incubation_temp_C = factor(incubation_temp_C, levels = c(-4, 4, 12)),
     incubation_time_d = factor(incubation_time_d, levels = c(180, 30, 7, 0))
   ) |>  
-  ps_filter(!is.na(depth)) |> 
-  #tax_agg("Genus") |> 
+  ps_filter(!is.na(depth))
+
+sample_names(ps.samples)
+```
+
+```{r}
+ps.blanks <- ps |> 
+  ps_filter(is.na(depth))
+
+sample_names(ps.blanks)
+```
+
+### Inspect the blanks
+
+```{r}
+ps.blanks |> plot_bar(fill = "Phylum")
+```
+
+There appears to be minimal contamination in our negative controls: between 20 and 30 reads.
+
+### Inspect the samples
+
+```{r}
+ps.samples |> 
+  tax_agg("Genus") |> 
   comp_barplot(tax_level = "Genus",
                x = "incubation_time_d",
                n_taxa = 40,
                ) +
+  #geom_area() +
   coord_flip() +
   facet_grid(vars(depth, incubation_temp_C)) +
   labs(x = "Incubation time (days)") +
-  theme(
-  )
-p_ps1
-
-cowplot::save_plot(filename = "output/p_ps1.pdf", plot = p_ps1, base_height = 8, base_width = 14)
-  
+  theme()
 ```
 
-## Subset the archaea
+## Focus on the archaea
 
 ```{r}
-ps.archaea <- ps |> tax_select(tax_list = "Archaea")
+interestingGenera <- ps.samples |> tax_select("Archaea") |> tax_top(n = 10, rank = "Genus")
+
+ps.samples |> 
+  comp_barplot(
+  tax_level = "Genus",
+  n_taxa = 7,
+  palette = distinct_palette(7, pal = "kelly", add = "grey90"),
+  tax_order = interestingGenera,
+  x = "incubation_time_d",
+) +
+  coord_flip(ylim = c(0, 0.045)) +
+  facet_grid(vars(depth, incubation_temp_C)) +
+  labs(
+    x = "Incubation time (days)"
+  )
+
   
 ```
 
 ```{r}
 ps.archaea |> 
-  tax_fix() |> 
-  comp_barplot(tax_level = "Genus",
-               x = "incubation_time_d",
-               n_taxa = 40,
-               ) +
-  coord_flip() +
-  facet_grid(vars(depth, incubation_temp_C)) +
-  theme(
-
-  )
+  plot_bar()
 ```
+
+# Normalize by biomass
+
+In this phyloseq object we have 16S read counts and relative abundances. We can normalize relative abundances by the total PLFA biomass in the sample to get a sense for absolute abundance of certain taxa. This assumes that both PLFAs and DNA are primarily representing living cells. This assumption is complicated by the caveat that sequenced DNA may be derived from necromass.
