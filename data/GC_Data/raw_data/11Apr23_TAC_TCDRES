@@ -1,0 +1,25 @@
+﻿Templeton
+Templeton
+N2024
+
+
+04/11/2023 11:25:15
+Syringe Injection
+
+TCD
+2m 2mmID ShinCarbonST 80/100
+Argon at 35psi
+
+ch2.evt
+TC_iso_TCD_comps.cpt
+60.0,40.0,    1.00, 1.000, 0.500,0
+K:\Templeton_Lab\SRI GC files\Peak426-32bit\TC_Ar_iso200_35psi.CON
+11Apr23_TAC_TCD_07
+0.75ml_1pc_mix
+TC
+
+
+"H2",1.943,1653.5377,162.179,0.2118,""
+"O2",2.298,14595.2316,1955.323,0.0000,""
+"CH4",2.984,518.5449,63.493,0.0000,""
+"CO2",3.794,184.0473,17.790,0.0000,""
