@@ -6,3 +6,4 @@
 fig_output/*
 cache/*
 #data/GC-IRMS/*
+*.pdf
