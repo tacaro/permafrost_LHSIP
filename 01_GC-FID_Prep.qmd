@@ -32,7 +32,7 @@ source("source/rename_FAs.R")
 FID_sample_metadata <- readxl::read_excel("data/sample_matrix.xlsx") |> 
   select(
     sample_id,
-    sample_num = `sample#`, # rename this column
+    sample_num = id, # rename this column
     core,
     temp, 
     inc_time_d
@@ -319,14 +319,18 @@ FID_export <- FID_samples |>
          mass_analyte_ng_per_g.FID) |> 
   # rename compounds to match putative identification
   rename_FAs()
-=======
+```
+
 ## Calculate Extraction/Derivitization Efficiency
+
+# 21:0 PC (Derivatization Efficiency)
 
 Both extraction and derivatization efficiency are reported as yield fractions (not percent yields).
 
 Calculate derivatization efficiency for both F3s and F2s by dividing the initial 21PC quantity by the estimated ng based on peak area.
 
-# 21:0 PC (Derivatization Efficiency)
+```{r}
+
 FID_21PC <- FID_samples |> 
   filter(`Peak Name` == "21:0") |> 
   select(sample, `Peak Name`, mass_analyte_total_ng, core, temp, inc_time_d) |> 
