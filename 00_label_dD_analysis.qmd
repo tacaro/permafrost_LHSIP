@@ -1,0 +1,40 @@
+---
+title: "Label dD calculations"
+format: html
+editor: visual
+editor_options: 
+  chunk_output_type: console
+---
+
+## Intro
+
+In order to conduct a SIP experiment, one must have *a priori* knowledge of the isotopic enrichment of the stable isotope tracer. For water-based lipid-SIP, this requires us to account for the mixing of our isotopic label (D2O) with water endogenous to the sample (soil/pore water).
+
+To do this, we measured the isotopic composition of the water present in the SIP incubations. This is the **effective label strength** that should be used for SIP analyses.
+
+## Setup
+
+```{r}
+library(tidyverse)
+source("source/d2H_to_F2H.R")
+```
+
+```{r}
+label_dD <- readxl::read_excel("data/label_dD/TCaro-HBatther_WaterIsotope_Results_070623_20230905_wdl1.xlsx", sheet = 2) |> 
+  select(sample_id, dD_SMOW) |> 
+  # convert delta to fractional abundance
+  mutate(
+    F2H_label = d2H_to_F2H(dD_SMOW),
+    at2H_label = F2H_label * 100,
+    sample_id = str_remove(sample_id, "m") # fix sample_id for joining with IRMS dataset
+    ) |> 
+  group_by(sample_id) |> 
+  summarize_all(mean)
+```
+
+## Export
+
+```{r}
+label_dD |> write_rds(file = "cache/label_dD.rds")
+label_dD |> writexl::write_xlsx(path = "data_output/label_dD.xlsx")
+```
