@@ -35,7 +35,7 @@ FID_sample_metadata <- readxl::read_excel("data/sample_matrix.xlsx") |>
     sample_num = id, # rename this column
     core,
     temp, 
-    inc_time_d
+    inc_time_d = dt
   )
 ```
 
@@ -136,9 +136,29 @@ cowplot::save_plot(filename = "fig_output/PAIBE_std_curve.pdf",
 ### Calculate standard curve
 
 ```{r}
-PAIBE_fit <- ols(data = PAIBE_external_standard, PAIBE_amount_ng ~ Area)
+# Generate a linear model for the PAIBE fit
+PAIBE_fit <- rms::ols(data = PAIBE_external_standard, PAIBE_amount_ng ~ Area)
+# Turn it into a function
 peak_area_to_ng <- Function(PAIBE_fit)
 ```
+
+Test the function:
+
+```{r}
+test_dataset <- tibble(
+  peak_area.pA = seq(0, 100, by = 1),
+  PAIBE.ng = peak_area_to_ng(peak_area.pA)
+)
+
+p_PAIBE_large %+%
+  geom_line(
+    data = test_dataset,
+    aes(x = peak_area.pA, y = PAIBE.ng),
+    color = "red", linetype = "dashed"
+  )
+```
+
+Yep, that's our regression line alright.
 
 ## Samples Import
 
@@ -293,8 +313,6 @@ FID_samples_combined <- FID_samples |>
     ),
   )
 ```
-
-\<\<\<\<\<\<\< Updated upstream \# Make a dataset to join with IRMS data
 
 ```{r}
 FID_export <- FID_samples |> 
