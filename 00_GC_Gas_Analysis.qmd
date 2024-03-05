@@ -195,13 +195,13 @@ peak_area_to_nmol <- function(gas, peak_area, limit = NA, force_zero = FALSE) {
   )
   } else if (limit == "upper") {
     nmol = case_when(
-      gas == "CH4" ~ (peak_area * (CH4_slope + CH4_SE)) + CH4_intercept,
-      gas == "CO2" ~ (peak_area * (CO2_slope + CO2_SE)) + CO2_intercept
+      gas == "CH4" ~ (peak_area * (CH4_slope + 2*CH4_SE)) + CH4_intercept,
+      gas == "CO2" ~ (peak_area * (CO2_slope + 2*CO2_SE)) + CO2_intercept
     )
   } else if (limit == "lower") {
     nmol = case_when(
-    gas == "CH4" ~ (peak_area * (CH4_slope - CH4_SE)) + CH4_intercept,
-    gas == "CO2" ~ (peak_area * (CO2_slope - CO2_SE)) + CO2_intercept
+    gas == "CH4" ~ (peak_area * (CH4_slope - 2*CH4_SE)) + CH4_intercept,
+    gas == "CO2" ~ (peak_area * (CO2_slope - 2*CO2_SE)) + CO2_intercept
     )
   } else {
     message("Incorrect function arguments, returning NA")
@@ -243,6 +243,7 @@ gc_samples <- gc |>
   filter(!file_name %in% bad_gc_list) |> 
   # we don't care about carbon monoxide
   filter(gas != "CO") |> 
+  # calculate gas concentrations
   mutate(
     volume.ml = as.numeric(str_extract(gc_sample_id, "\\d+(\\.\\d+)?(?=ml)")),
     nmol = peak_area_to_nmol(gas = gas, peak_area = peak_area, 
@@ -317,19 +318,23 @@ gc_samples_mtda <- gc_samples |>
   )
 ```
 
-Fix the fact that entries with undetectable gas do not exist (as opposed to being zeroes). SRI data formats.
+### Fix missing data entries
+
+When a gas is not detected in a sample, the SRI data format does not include that gas in its output as a zero `0`. Instead, the entry for that gas is excluded entirely. This makes it look like the dataset has missing values when in fact the values were 'not detected (ND)' or `0`.
 
 ```{r}
 missing_entries <- tribble(
-  ~sample_id,          ~dt,   ~nmol_per_ml_g_t0,  ~diff_nmol_per_ml_g, ~gas,
-  "p54m(-4C)7d",      0,     0, 0, "CH4",
-  "p54m(-4C)7d",      0,     0, 0, "CO2",
-  "p54m(-4C)30d",     0,     0, 0, "CH4",
-  "p54m(-4C)30d",     0,     0, 0, "CO2",
-  "p83m(-4C)7d",      0,     0, 0, "CH4",
-  "p83m(-4C)7d",      0,     0, 0, "CO2",
-  "p83m(12C)30d",     0,     0, 0, "CH4",
-  "pUS(12C)30d",      0,     0, 0, "CH4"
+  ~sample_id,          ~dt,   ~nmol_per_ml_g_t0,  ~diff_nmol_per_ml_g, 
+  ~diff_nmol_per_g, ~gas,
+  "p54m(-4C)7d",      0,     0, 0,0, "CH4",
+  "p54m(-4C)7d",      0,     0, 0,0, "CO2",
+  "p54m(-4C)7d",      0,     0, 0,0, "CO2",
+  "p54m(-4C)30d",     0,     0, 0,0, "CH4",
+  "p54m(-4C)30d",     0,     0, 0,0, "CO2",
+  "p83m(-4C)7d",      0,     0, 0,0, "CH4",
+  "p83m(-4C)7d",      0,     0, 0,0, "CO2",
+  "p83m(12C)30d",     0,     0, 0,0, "CH4",
+  "pUS(12C)30d",      0,     0, 0,0, "CH4"
 ) |> 
   mutate(
     inc_temp_C = parse_number(str_extract(sample_id, pattern = "\\((.*?)\\)")),
@@ -371,10 +376,22 @@ gc_samples_mtda_t0 <-  gc_samples_mtda |>
       is.na(nmol_per_ml_t0) ~ 0,
       TRUE ~ nmol_per_ml_t0
     ),
-    # nmol per ml per g:
+    # calculate nmol per ml per g:
     diff_nmol_per_ml_g = nmol_per_ml_g - nmol_per_ml_g_t0,
     diff_nmol_per_ml_g.lower = nmol_per_ml_g.lower - nmol_per_ml_g_t0,
-    diff_nmol_per_ml_g.upper = nmol_per_ml_g.upper - nmol_per_ml_g_t0
+    diff_nmol_per_ml_g.upper = nmol_per_ml_g.upper - nmol_per_ml_g_t0,
+    # calculate nmol per g (total gas present in the headspace)
+    # replace ND values with zero
+    # the headspace was approximately 400 ml
+    diff_nmol_per_g = case_when(
+      !is.na(diff_nmol_per_ml_g) ~ diff_nmol_per_ml_g * 400,
+      is.na(diff_nmol_per_ml_g) ~ 0),
+    diff_nmol_per_g.lower = case_when(
+      !is.na(diff_nmol_per_ml_g.lower) ~ diff_nmol_per_ml_g.lower * 400,
+      is.na(diff_nmol_per_ml_g.lower) ~ 0),
+    diff_nmol_per_g.upper = case_when(
+      !is.na(diff_nmol_per_ml_g.upper) ~ diff_nmol_per_ml_g.upper * 400,
+      is.na(diff_nmol_per_ml_g.upper) ~ 0)
   ) |> 
   bind_rows(missing_entries) |> 
   # add character string version of incubation time and temp
@@ -390,7 +407,12 @@ gc_samples_mtda_t0 <-  gc_samples_mtda |>
     site = factor(site, levels = c("Surface", "35m", "54m", "83m"))
   )
 
+
+gc_samples_mtda_t0 |> filter(is.na(diff_nmol_per_g)) |> view(
+)
 ```
+
+# Plot
 
 ```{r}
 p35m <- gc_samples_mtda_t0 |> 
@@ -566,7 +588,7 @@ pCH4 <- gc_samples_mtda_t0 |>
   ggplot(
     aes(
       x = as.numeric(dt),
-      y = diff_nmol_per_ml_g,
+      y = diff_nmol_per_g,
       fill = inc_temp_C_str,
       #group = as.factor(inc_time_d),
       shape = inc_temp_C_str
@@ -577,18 +599,18 @@ pCH4 <- gc_samples_mtda_t0 |>
     color = "gray"
     ) +
   geom_pointrange(
-    aes(ymin = diff_nmol_per_ml_g.lower, 
-        ymax = diff_nmol_per_ml_g.upper),
+    aes(ymin = diff_nmol_per_g.lower, 
+        ymax = diff_nmol_per_g.upper),
     color = "black"
     ) +
   scale_fill_viridis_d(end = 0.95) +
   scale_shape_manual(values = c(21, 22, 23)) +
   facet_grid(site~inc_time_d_str, scales = "free_x") +
   ggprism::annotation_ticks(sides = "trbl") +
-  coord_cartesian(ylim = c(0, 0.5)) +
+  coord_cartesian(ylim = c(0, 200)) +
   labs(
     x = "Days after perturbation",
-    y = latex2exp::TeX("nmol $ml^{-1} \\; g^{-1}$"),
+    y = latex2exp::TeX("nmol $g^{-1}$"),
     fill = "Temperature",
     shape = "Temperature",
     title = "CH4"
@@ -598,7 +620,9 @@ pCH4 <- gc_samples_mtda_t0 |>
     panel.grid = element_blank(),
     axis.ticks = element_blank(),
     axis.text = element_text(color = "black"),
-    legend.position = "None"
+    legend.position = "None",
+    strip.text = element_text(color = "white", face = "bold"),
+    strip.background = element_rect(color = "black", fill = "#2e2e2e")
   )
 pCH4
 
@@ -608,7 +632,7 @@ pCO2 <- gc_samples_mtda_t0 |>
   ggplot(
     aes(
       x = as.numeric(dt),
-      y = diff_nmol_per_ml_g,
+      y = diff_nmol_per_g,
       fill = inc_temp_C_str,
       #group = as.factor(inc_time_d),
       shape = inc_temp_C_str
@@ -619,18 +643,18 @@ pCO2 <- gc_samples_mtda_t0 |>
     color = "gray"
     ) +
   geom_pointrange(
-    aes(ymin = diff_nmol_per_ml_g.lower, 
-        ymax = diff_nmol_per_ml_g.upper),
+    aes(ymin = diff_nmol_per_g.lower, 
+        ymax = diff_nmol_per_g.upper),
     color = "black"
     ) +
   scale_fill_viridis_d(end = 0.95) +
   scale_shape_manual(values = c(21, 22, 23)) +
   facet_grid(site~inc_time_d_str, scales = "free_x") +
   ggprism::annotation_ticks(sides = "trbl") +
-  coord_cartesian(ylim = c(0, 10)) +
+  coord_cartesian(ylim = c(0, 4200)) +
   labs(
     x = "Days after perturbation",
-    y = latex2exp::TeX("nmol $ml^{-1} \\; g^{-1}$"),
+    y = latex2exp::TeX("nmol $g^{-1}$"),
     fill = "Temperature",
     shape = "Temperature",
     title = "CO2"
@@ -640,12 +664,16 @@ pCO2 <- gc_samples_mtda_t0 |>
     panel.grid = element_blank(),
     axis.ticks = element_blank(),
     axis.text = element_text(color = "black"),
-    legend.position = "None"
+    legend.position = "None",
+    strip.text = element_text(color = "white", face = "bold"),
+    strip.background = element_rect(color = "black", fill = "#2e2e2e")
   )
 pCO2
 
 p_legend <- cowplot::get_legend(pCO2 %+% theme(legend.position = "right"))
 ```
+
+# Save plots
 
 ```{r}
 p_combined <- cowplot::plot_grid(
@@ -656,7 +684,7 @@ p_combined <- cowplot::plot_grid(
 p_combined
 
 cowplot::save_plot(
-  filename = "fig_output/p_gas_data.pdf",
+  filename = "fig_output/p_gas_data_revised.pdf",
   plot = p_combined,
   base_height = 8,
   base_width = 10
