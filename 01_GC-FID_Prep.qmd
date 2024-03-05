@@ -36,7 +36,8 @@ FID_sample_metadata <- readxl::read_excel("data/sample_matrix.xlsx") |>
     core,
     temp, 
     inc_time_d = dt
-  )
+  ) |> 
+  mutate(sample_id = str_remove(sample_id, "m"))
 ```
 
 ### Standards Import and Cleanup
@@ -233,7 +234,7 @@ FID_sample_results <- FID_results_F2s |>
   bind_rows(FID_results_F3s) |> 
   # cleanup
   select(-c(`No.`, Amount, `Relative Area`, `Relative Height`)) |> 
-  # convert area to ng
+  # convert peak area to ng
   mutate(
     mass_analyte_ng_per_ul = peak_area_to_ng(Area),
     sample_volume = parse_number(str_extract(sample, "\\d{2,3}ul")),
@@ -260,58 +261,15 @@ FID_sample_results <- FID_results_F2s |>
 
 ```{r}
 FID_samples <- FID_sample_results |> 
-  left_join(FID_sample_metadata, by = "sample_id") |> 
   # remove standards, readychecks, flameoffs
   filter(
     !str_detect(sample, "BAME"),
     !str_detect(sample, "37FAME"),
     !str_detect(sample, "RDYCHK"),
     !str_detect(sample, "FLAMEOFF")
-     )
-```
+     ) |> 
+    left_join(FID_sample_metadata, by = "sample_id")
 
-### Virtually combine F2s and F3s
-
-```{r}
-FID_samples_combined <- FID_samples |> 
-  select(
-    sample_id, fraction, `Peak Name`, 
-    mass_analyte_total_ng, core, temp, inc_time_d
-    ) |> 
-  mutate(
-    mass_F2_ng = case_when(fraction == "F2" ~ mass_analyte_total_ng),
-    mass_F3_ng = case_when(fraction == "F3" ~ mass_analyte_total_ng)
-  ) |> 
-  group_by(
-    sample_id, `Peak Name`, core, temp, inc_time_d
-  ) |> 
-  dplyr::summarize(
-    mass_F2_ng = sum(mass_F2_ng, na.rm = TRUE),
-    mass_F3_ng = sum(mass_F3_ng, na.rm = TRUE)
-  ) |> 
-  ungroup() |>
-  group_by(sample_id, `Peak Name`) |> 
-  mutate(
-    combined_sample_mass_ng = sum(mass_F3_ng, mass_F2_ng),
-    ) |> 
-  # in quantification range of IRMS?
-  mutate(
-    quantifiable_combined = if_else(
-      combined_sample_mass_ng >= 150,
-      true = TRUE,
-      false = FALSE
-    ),
-    quantifiable_F2 = if_else(
-      mass_F2_ng >= 150,
-      true = TRUE,
-      false = FALSE
-    ),
-    quantifiable_F3 = if_else(
-      mass_F3_ng >= 150,
-      true = TRUE,
-      false = FALSE
-    ),
-  )
 ```
 
 ```{r}
@@ -351,23 +309,26 @@ Calculate derivatization efficiency for both F3s and F2s by dividing the initial
 
 FID_21PC <- FID_samples |> 
   filter(`Peak Name` == "21:0") |> 
-  select(sample, `Peak Name`, mass_analyte_total_ng, core, temp, inc_time_d) |> 
+  select(sample, `Peak Name`, mass_analyte_total_ng, core, temp, inc_time_d, fraction) |> 
   rename(mass_21PC_ng = mass_analyte_total_ng) |> 
   mutate(initial_21PC_ng = 10000) |> 
   mutate(deriv_efficiency = mass_21PC_ng / initial_21PC_ng)
   
 ```
 
-Calculate extraction efficiency for *only F3s* by dividing initial 23PC quantity by the estimated ng based on peak area. We do not do this for F2s because 23PC is removed from F2s during the silica chromatography step. The mean extraction efficiency for F3s will be applied to the F2s.
+Calculate extraction efficiency for *only F3s* by dividing initial 23PC quantity by the estimated ng based on peak area. We do not do this for F2s because 23PC is removed from F2s during the silica chromatography step. The mean extraction efficiency for F3s will be applied to the F2s, with the assumption being that phospholipids extract at similar efficiency to glycolipids.
 
 ```{r}
 # 23:0 PC (Extraction Efficiency)
 FID_23PC <- FID_samples |> 
-  filter(fraction == "F3", `Peak Name` == "23:0") |> 
-  select(sample, `Peak Name`, mass_analyte_total_ng, core, temp, inc_time_d) |> 
+  filter(fraction == "F3", `Peak Name` == "23:0") |> # focus only on F3s but apply this extraction efficieny to F2s
+  select(sample, `Peak Name`, mass_analyte_total_ng, core, temp, inc_time_d, fraction) |> 
   rename(mass_23PC_ng = mass_analyte_total_ng) |> 
-  mutate(initial_23PC_ng = 50000) |> 
+  mutate(initial_23PC_ng = 50000) |> #50 ug to ng
   mutate(extraction_efficiency = mass_23PC_ng / initial_23PC_ng)
+
+mean_extraction_efficiency <- FID_23PC |> 
+  summarize(extraction_efficiency = mean(extraction_efficiency))
 ```
 
 Plot the extraction and derivatization efficiency
@@ -378,17 +339,18 @@ FID_23PC |>
     aes(
       x = core,
       y = extraction_efficiency,
-      color = as.factor(temp)
+      color = as.factor(temp),
+      shape = fraction
     )
   ) +
   geom_point() +
-  #geom_boxplot() +
+  #geom_boxplot(width = 0.25) +
   lemon::facet_rep_wrap(vars(inc_time_d)) +
   coord_cartesian(ylim = c(0, .20)) +
   scale_y_continuous(labels = scales::label_percent(),
                      breaks = c(0, .05, .10, .15, .2),
                      sec.axis = dup_axis()) +
-  scale_color_manual(values = c("#f5a607", "#0772f5", "#f50747")) +
+  scale_color_brewer(palette = "Set1") +
   labs(x = "",
        y = "Extraction Efficiency",
        color = "Incubation Temperature (C)") +
@@ -412,7 +374,8 @@ FID_21PC |>
     aes(
       x = core,
       y = deriv_efficiency,
-      color = as.factor(temp)
+      color = as.factor(temp),
+      shape = fraction
     )
   ) +
   geom_point() +
@@ -420,7 +383,7 @@ FID_21PC |>
   lemon::facet_rep_wrap(vars(inc_time_d)) +
   scale_y_continuous(labels = scales::label_percent(),
                      sec.axis = dup_axis()) +
-  scale_color_manual(values = c("#f5a607", "#0772f5", "#f50747")) +
+  scale_color_brewer(palette = "Set1") +
   coord_cartesian(ylim = c(0, 1)) +
   labs(x = "",
        y = "Derivatization Efficiency",
@@ -435,7 +398,6 @@ FID_21PC |>
     axis.title.y.right = element_blank(),
     axis.text.y.right = element_blank()
     )
->>>>>>> Stashed changes
 ```
 
 ## Export Cache and clean environment
