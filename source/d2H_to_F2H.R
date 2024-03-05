@@ -1,5 +1,5 @@
 #' Delta 2H to 2F
-#' @param d2H deuterium isotopic enrichment in delta notation relative to VSMOW
+#' @param d2H deuterium isotopic enrichment in delta notation permil relative to VSMOW
 #' @return fractional abundance of deuterium in atom percent
 #' 
 
