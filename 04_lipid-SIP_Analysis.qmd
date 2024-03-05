@@ -35,15 +35,25 @@ F2H_VSMOW <- ref_frac |> as.numeric()
 Load data (see earlier note)
 
 ```{r}
-# read in JCR data
-JCR_metadata <- readxl::read_excel("data/JCR_sample_metadata.xlsx") |> 
-  select(JCR_id, site_group, notes)
 
+# read in label dD data
+label_dD <- read_rds("cache/label_dD.rds") |> select(-dD_SMOW, -at2H_label)
+
+# read in JCR data
+JCR_metadata <- readxl::read_excel("data/JCR-metadata-Feb-2023.xlsx")|> 
+  rename(F2H_label_JCR = `Effective F2H`)
+
+# read in permafrost data
 sample_peak_table <- read_rds("cache/iso_peak_table_mapped.rds") |> 
   rename(analysis = Analysis) |> 
   filter(type == "sample") |> # remove F8s, FH5s, FSH9s
   filter(compound != "H2") |> # remove ref gas peaks
   filter(!is.na(compound)) |> # remove unassigned compounds
+  mutate(
+    # cleanup the sample_id string
+    sample_id = str_extract(sample_id, ".*d-"),
+    sample_id = str_sub(sample_id, start = 1, end = -2)
+  ) |> 
   # add in some basic metadata:
   mutate(
     site = case_when(
@@ -58,20 +68,16 @@ sample_peak_table <- read_rds("cache/iso_peak_table_mapped.rds") |>
       str_detect(sample_id, "(12C)") ~ 12
     ),
     fraction = case_when(
-      str_detect(sample_id, "F2") ~ "glyco-IPL",
-      str_detect(sample_id, "F3") ~ "phospho-IPL"
+      str_detect(file_id, "F2") ~ "glyco-IPL",
+      str_detect(file_id, "F3") ~ "phospho-IPL"
     ),
     experiment = case_when(
-      str_detect(sample_id, "HDK23") ~ "JCR",
+      str_detect(file_id, "HDK23") ~ "JCR",
       TRUE ~ "Fox, AK"
     ),
     JCR_id = case_when(
-      experiment == "JCR" ~ str_extract(sample_id, "HDK23-(\\d{3})"),
+      experiment == "JCR" ~ str_extract(file_id, "HDK23-(\\d{3})"),
       TRUE ~ NA
-    ),
-    F2H_label = case_when(
-      experiment == "JCR" ~ 0.005, # used 0.5 at. % label for JCR
-      experiment == "Fox, AK" ~ 0.01 # used 1 at. % label for permafrost
     ),
       inc_time_d = case_when(
         str_detect(sample_id, "30d") ~ 30,
@@ -126,10 +132,22 @@ sample_FA_t0_mean <- sample_peak_table_t0 |>
   pull(mean_F2H_t0) |> mean()
 ```
 
+### Adjust label strengths
+
+```{r}
+sample_peak_table_FL <- sample_peak_table |> 
+  left_join(label_dD, by = "sample_id") |> 
+  mutate(F2H_label = case_when(
+    is.na(F2H_label) ~ F2H_label_JCR,
+    TRUE ~ F2H_label
+    )
+  ) |> select(-F2H_label_JCR)
+```
+
 ### Growth Calcs
 
 ```{r}
-growth_data <- sample_peak_table |> 
+growth_data <- sample_peak_table_FL |> 
   #add in the t0 data
   left_join(sample_peak_table_t0, by = c("compound", "site")) |> 
   mutate(
@@ -144,20 +162,28 @@ growth_data <- sample_peak_table |>
     )
   ) |> 
   mutate(
-    u_d = calculate_turnover(
-      a = 0.71,
-      FT = F2H,
-      F0 = mean_F2H_t0,
-      FL = F2H_label,
-      t = inc_time_d
+    u_d = case_when(
+      inc_time_d == 0 ~ 0, # growth rate of organisms at t0 is zero
+      inc_time_d > 0 ~
+        calculate_turnover(
+        a = 0.71,
+        FT = F2H,
+        F0 = mean_F2H_t0,
+        FL = F2H_label,
+        t = inc_time_d
+        )
     )
   ) |> 
-  mutate(
-    # cleanup the sample_id string
-    sample_id = str_extract(sample_id, ".*d-"),
-    sample_id = str_sub(sample_id, start = 1, end = -2)
-  ) |> 
   rename_FAs() # update FA names based on putative identification
+```
+
+Inspect the data
+
+```{r}
+growth_data |> 
+  select(sample_id, compound, u_d, F2H, mean_F2H_t0, F2H_label) |> 
+  filter(is.na(u_d)) |> 
+  gt::gt()
 ```
 
 # Join with abundance data
@@ -185,6 +211,30 @@ growth_w_FID <- growth_data_tidy |>
 
 # Plots
 
+### Lipid abundance
+
+```{r}
+PLFA_sums <- growth_w_FID |> 
+  filter(fraction == "phospho-IPL") |>
+  group_by(site, inc_time_d, inc_temp_C) |> 
+  summarize(
+    PLFA_total_ng_per_g = sum(mass_analyte_ng_per_g.FID, na.rm = TRUE)
+  )
+
+PLFA_sums |> 
+  ggplot(
+    aes(
+      x = inc_time_d,
+      y = PLFA_total_ng_per_g,
+      color = as.factor(inc_temp_C)
+    )
+  ) +
+  geom_point() +
+  geom_line() +
+  scale_color_viridis_d() +
+  facet_wrap(vars(site), scales = "free_y")
+```
+
 ## Fox prelim
 
 #### F2H
@@ -200,14 +250,10 @@ p_fox_F2H <- growth_data |>
     #y = F2H * 1e6, # uncomment this for F2H in ppm
     y = as.numeric(d2H), # using delta notation for now
     x = inc_time_d,
-    color = compound
+    color = compound,
+    shape = fraction
   ) +
-  geom_point(aes(shape = fraction)) +
-  # geom_boxplot(aes(group = as.factor(inc_time_d)),
-  #              fill = NA, color = "black",
-  #              width = 0.8,
-  #              outlier.shape = NA) +
-  #geom_line() +
+  geom_point() +
   facet_grid(site~as.factor(inc_temp_C)) +
   labs(
     x = "Incubation time (days)",
@@ -222,12 +268,12 @@ p_fox_F2H
 
 # anomalously high d2H is probably an area effect. future data calibration/scrubbing will most likely remove these!
 
-cowplot::save_plot(
-  filename = "fig_output/p_fox_F2H.pdf",
-  plot = p_fox_F2H,
-  base_height = 10,
-  base_width = 10
-)
+# cowplot::save_plot(
+#   filename = "fig_output/p_fox_F2H.pdf",
+#   plot = p_fox_F2H,
+#   base_height = 10,
+#   base_width = 10
+# )
 ```
 
 ```{r}
@@ -235,13 +281,22 @@ p_fox_F2H_surface <- growth_data |>
   filter(experiment == "Fox, AK") |> 
   filter(site == "Surface") |> 
   filter(!is.na(site)) |>
+  mutate(
+    diff_F2H = case_when(
+      inc_time_d == 0 ~ 0,
+      inc_time_d > 0 ~ F2H - mean_F2H_t0
+    )
+  ) |> 
   ggplot() +
   aes(
-    y = F2H * 1e6,
-    x = inc_time_d
+    y = diff_F2H * 1e6,
+    x = inc_time_d,
+    shape = fraction,
+    group = compound
   ) +
   geom_point() +
-  #geom_line(aes(group = compound)) +
+  geom_line() +
+  facet_grid(vars(fraction)) +
   labs(
     x = "Incubation Time (Days)",
     y = latex2exp::TeX("$\\Delta^{2}F_{biomass}$  (ppm)"),
@@ -250,12 +305,12 @@ p_fox_F2H_surface <- growth_data |>
   theme_bw()
 p_fox_F2H_surface
 
-cowplot::save_plot(
-  filename = "fig_output/p_fox_F2H_surface.pdf",
-  plot = p_fox_F2H_surface,
-  base_height = 4,
-  base_width = 4
-) 
+# cowplot::save_plot(
+#   filename = "fig_output/p_fox_F2H_surface.pdf",
+#   plot = p_fox_F2H_surface,
+#   base_height = 4,
+#   base_width = 4
+# ) 
 ```
 
 #### Growth rate (µ)
@@ -282,12 +337,12 @@ p_fox_u_d_surface <- growth_data |>
   geom_point(aes(color = fraction, shape = fraction),
              size = 3) +
   scale_color_brewer(palette = "Set1")+
-  facet_grid(inc_time_d_str~fraction) +
-  #coord_cartesian(expand = FALSE, ylim = c(0, 18), xlim = c(0, 0.0058)) +
+  facet_wrap(inc_time_d_str~fraction, scales = "free_x") +
+  coord_cartesian(expand = FALSE, ylim = c(0, 17), xlim = c(0, 0.023)) +
   scale_x_continuous(
     sec.axis = sec_axis(
       trans = ~ log(2) / .,
-      breaks = c(1000, 365, 180, 120, 7),
+      breaks = c(1000, 360, 180, 120, 80, 60, 35),
       name = "Generation Time (d)")
   ) +
   labs(
@@ -314,12 +369,12 @@ p_fox_u_d_surface <- growth_data |>
   )
 p_fox_u_d_surface
 
-cowplot::save_plot(
-  filename = "fig_output/p_fox_u_d_surface.pdf",
-  plot = p_fox_u_d_surface,
-  base_height = 10,
-  base_width = 10
-)
+# cowplot::save_plot(
+#   filename = "fig_output/p_fox_u_d_surface.pdf",
+#   plot = p_fox_u_d_surface,
+#   base_height = 10,
+#   base_width = 10
+# )
 ```
 
 ```{r}
@@ -327,7 +382,7 @@ p_fox_subsurface_u_d <- growth_data |>
   filter(experiment == "Fox, AK") |> 
   filter(site != "Surface") |> 
   filter(!is.na(site)) |> 
-  filter(inc_time_d == 30) |> # only look at 30 day incubations!
+  filter(inc_time_d == 7) |> # only look at 30 day incubations!
   filter(!is.na(u_d)) |> 
   mutate(inc_time_d_str = factor(paste(inc_time_d, "days"), 
                                  levels = c("7 days", "30 days")),
@@ -350,7 +405,7 @@ p_fox_subsurface_u_d <- growth_data |>
   scale_x_continuous(
     sec.axis = sec_axis(
       trans = ~ log(2) / .,
-      breaks = c(3650, 1000, 365, 120),
+      breaks = c(3650, 1200, 800, 600, 500, 365, 120),
       name = "Generation Time (d)")
   ) +
   #coord_cartesian(xlim = c(0, 0.0008), ylim = c(0,13)) +
@@ -376,12 +431,12 @@ p_fox_subsurface_u_d <- growth_data |>
   )
 p_fox_subsurface_u_d
 
-cowplot::save_plot(
-  filename = "fig_output/p_fox_subsurface_u_d.pdf",
-  plot = p_fox_subsurface_u_d,
-  base_width = 10,
-  base_height = 10
-)
+# cowplot::save_plot(
+#   filename = "fig_output/p_fox_subsurface_u_d.pdf",
+#   plot = p_fox_subsurface_u_d,
+#   base_width = 10,
+#   base_height = 10
+# )
 ```
 
 ### Growth vs. abundance
@@ -431,12 +486,12 @@ p_u_d_vs_abund
 #   base_width = 10
 # )
 
-ggsave(
-  plot = p_u_d_vs_abund,
-  filename = "fig_output/p_u_d_vs_abund.png",
-  height = 10,
-  width = 10
-)
+# ggsave(
+#   plot = p_u_d_vs_abund,
+#   filename = "fig_output/p_u_d_vs_abund.png",
+#   height = 10,
+#   width = 10
+# )
 ```
 
 ```{r}
@@ -444,15 +499,16 @@ p_surface_u_d_abund <- growth_w_FID |>
   filter(site == "Surface") |> 
   mutate(inc_temp_C_str = factor(paste(inc_temp_C, "˚C"), c("-4 ˚C", "4 ˚C", "12 ˚C"))) |> 
   mutate(inc_time_d_str = factor(paste(inc_time_d, "days"), c("7 days", "30 days", "180 days"))) |> 
-  filter(inc_time_d == 30) |> 
   ggplot(
     aes(
       x = mass_analyte_ng_per_g.FID,
       y = u_d,
-      label = compound
+      label = compound,
+      shape = inc_time_d_str,
+      color = inc_time_d_str
     )
   ) +
-  geom_point(alpha = 1, color = "Purple ", shape = 1) +
+  geom_point(alpha = 1) +
   labs(
     x = "Lipid abundance (ng/g permafrost)",
     y = latex2exp::TeX("Growth rate $(day^{-1})$"),
@@ -471,12 +527,12 @@ p_surface_u_d_abund <- growth_w_FID |>
   )
 p_surface_u_d_abund
 
-cowplot::save_plot(
-  filename = "fig_output/p_surface_u_d_abund.pdf",
-  plot = p_surface_u_d_abund,
-  base_height = 4,
-  base_width = 4
-)
+# cowplot::save_plot(
+#   filename = "fig_output/p_surface_u_d_abund.pdf",
+#   plot = p_surface_u_d_abund,
+#   base_height = 4,
+#   base_width = 4
+# )
 ```
 
 ## JCR prelim
@@ -489,7 +545,7 @@ p_JCR_u_d <- growth_data |>
   aes(
     x = u_d,
     y = compound,
-    fill = site_group,
+    fill = Site,
   ) +
   geom_segment(
     aes(
@@ -500,7 +556,7 @@ p_JCR_u_d <- growth_data |>
     color = "black"
   ) +
   geom_point(
-    shape = 24,
+    shape = 21,
     color = "black",
     size = 3
   ) +
@@ -508,11 +564,11 @@ p_JCR_u_d <- growth_data |>
   scale_x_continuous(
     sec.axis = sec_axis(
       trans = ~ log(2) / .,
-      breaks = c(7, 18, 30, 90, 1000),
+      breaks = c(10, 18, 30, 90, 1000),
       name = "Generation Time (d)")
   ) +
-  coord_cartesian(expand = FALSE, xlim = c(0, 0.07), ylim = c(0, 17)) +
-  facet_wrap(vars(notes)) +
+  #coord_cartesian(expand = FALSE, xlim = c(0, 0.07), ylim = c(0, 17)) +
+  facet_wrap(vars(`Site`), ncol = 2) +
   theme_bw() +
   theme(
     axis.text.x = element_text(angle = 90, hjust = 1),
@@ -524,6 +580,8 @@ p_JCR_u_d <- growth_data |>
     axis.text = element_text(color = "black"),
     axis.text.x.bottom = element_text(angle = 45, hjust = 1),
     axis.text.x.top = element_text(angle = 45, hjust = 0),
+    panel.spacing = unit(0.5, "cm"),
+    axis.text.y = element_text(size = 6)
   ) +
   labs(
     x = latex2exp::TeX("Biomass Growth Rate $(d ^{-1})$"),
@@ -532,10 +590,4 @@ p_JCR_u_d <- growth_data |>
   )
 p_JCR_u_d
 
-cowplot::save_plot(
-  plot = p_JCR_u_d,
-  "fig_output/p_JCR_u_d.pdf",
-  base_height = 10,
-  base_width = 10
-  )
 ```
