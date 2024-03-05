@@ -12,7 +12,7 @@ editor_options:
 library(phyloseq) # Handling and analysis of high-throughput microbiome census data, Bioconductor v1.46.0
 library(tidyverse) # Easily Install and Load the 'Tidyverse', CRAN v2.0.0
 library(microViz) # Microbiome Data Analysis and Visualization, [::david-barnett/microViz] v0.12.1
-
+library(patchwork)
 ```
 
 ## Load PS object
@@ -43,9 +43,18 @@ ps.samples <- ps |>
     incubation_temp_C = factor(incubation_temp_C, levels = c(-4, 4, 12)),
     incubation_time_d = factor(incubation_time_d, levels = c(180, 30, 7, 0))
   ) |>  
-  ps_filter(!is.na(depth))
+  ps_filter(!is.na(depth)) |> 
+  ps_mutate(inc_time_d = as.numeric(as.character(incubation_time_d))) |> 
+  ps_mutate(inc_time_d_str = paste0(inc_time_d, " days")) |> 
+  ps_mutate(inc_time_d_fct = factor(
+    inc_time_d_str, 
+    levels = c("0 days", "7 days", "30 days", "180 days"))) |> 
+  ps_mutate(inc_temp_C_str = factor(paste0(incubation_temp_C, "C"), levels = c("-4C", "4C", "12C"))) |> 
+  ps_arrange(inc_time_d_fct)
 
 sample_names(ps.samples)
+
+sample_data(ps.samples)
 ```
 
 ```{r}
@@ -61,25 +70,35 @@ sample_names(ps.blanks)
 ps.blanks |> plot_bar(fill = "Phylum")
 ```
 
-There appears to be minimal contamination in our negative controls: between 20 and 30 reads.
+There appears to be negligible contamination in our negative controls: between 20 and 30 reads.
 
-### Inspect the samples
+## Barplot
 
 ```{r}
-ps.samples |> 
+p_barplot <- ps.samples |> 
+  ps_mutate(
+    inc_time_d_fct = factor(
+      inc_time_d_fct, levels = c("180 days", "30 days", "7 days", "0 days"))
+  ) |> 
   tax_agg("Genus") |> 
   comp_barplot(tax_level = "Genus",
-               x = "incubation_time_d",
+               x = "inc_time_d_fct",
                n_taxa = 40,
                ) +
   #geom_area() +
   coord_flip() +
   facet_grid(vars(depth, incubation_temp_C)) +
   labs(x = "Incubation time (days)") +
-  theme()
+  theme(
+    legend.position = "left"
+  ) +
+  guides(
+    fill = guide_legend(ncol = 2)
+  )
+p_barplot
 ```
 
-## Focus on the archaea
+## Archaea Barplot
 
 ```{r}
 interestingGenera <- ps.samples |> tax_select("Archaea") |> tax_top(n = 10, rank = "Genus")
@@ -90,7 +109,7 @@ ps.samples |>
   n_taxa = 7,
   palette = distinct_palette(7, pal = "kelly", add = "grey90"),
   tax_order = interestingGenera,
-  x = "incubation_time_d",
+  x = "incubation_time_d_fct",
 ) +
   coord_flip(ylim = c(0, 0.045)) +
   facet_grid(vars(depth, incubation_temp_C)) +
@@ -101,11 +120,103 @@ ps.samples |>
   
 ```
 
+## Alpha Diversity (Simpson's)
+
+Alpha diversity describes "within-sample" diversity. It's a measure of how diverse a single sample is, not taking into account observations of other samples.
+
+Here we apply the Simpson index (or the "Gini-Simpson index"). The Simpson index is similar to the [Shannon Index](https://en.wikipedia.org/wiki/Diversity_index#Shannon_index): it is based on the probability that two entities (microbes, reads, etc.) taken from the sample at random are of different types (e.g., species). As this is a probability, the score ranges from 0 to 1.
+
+$$
+Simpson = 1 - \sum_{i = 1}^{R} p_i^2
+$$
+
+where $p_i$ is the proportion of observations (reads) belonging to the $i$th species.
+
 ```{r}
-ps.archaea |> 
-  plot_bar()
+p_alpha <- ps.samples |>
+  ps_arrange(inc_time_d_fct) |> 
+  plot_richness(
+    x = "inc_time_d_fct",
+    measures = "Simpson",
+    color = "depth"
+  ) +
+  facet_wrap(vars(incubation_temp_C)) +
+  geom_line(aes(group = depth)) +
+  labs(
+    x = "Incubation Time (Days)",
+    y = "Simpson Index"
+  ) +
+  theme_bw() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1)
+    )
+p_alpha
+
+p_alpha2 <- ps.samples |>
+  ps_mutate(
+    inc_time_d_fct = factor(inc_time_d_fct, levels = c("180 days", "30 days", "7 days", "0 days"))
+  ) |> 
+  plot_richness(
+    x = "inc_time_d_fct",
+    measures = "Simpson",
+  ) +
+  geom_line(aes(group = depth), color = "black") +
+  geom_point(aes(fill = incubation_temp_C, shape = depth), color = "black") +
+  facet_grid(vars(depth, incubation_temp_C)) +
+  coord_flip() +
+  scale_color_viridis_d() +
+  scale_fill_viridis_d() +
+  scale_shape_manual(values = c(21, 22, 23, 24)) +
+  labs(
+    x = "",
+    y = "Simpson Index"
+  ) +
+  theme_bw() +
+  theme(
+    strip.background = element_rect(fill = "black"),
+    strip.text = element_text(color = "white", face = "bold"),
+    legend.position = "None",
+    axis.text.y = element_blank(),
+    axis.ticks.y = element_blank()
+    )
+p_alpha2
+
+
+
+cowplot::save_plot(
+  filename = "output/p_alpha.pdf",
+  plot = p_alpha,
+  base_height = 5,
+  base_width = 5
+)
 ```
 
-# Normalize by biomass
+### Combined Alpha and barplot
 
-In this phyloseq object we have 16S read counts and relative abundances. We can normalize relative abundances by the total PLFA biomass in the sample to get a sense for absolute abundance of certain taxa. This assumes that both PLFAs and DNA are primarily representing living cells. This assumption is complicated by the caveat that sequenced DNA may be derived from necromass.
+```{r}
+p_barplot_nostrip <- p_barplot %+% theme(strip.text = element_blank(), strip.background = element_blank())
+
+p_combined <- p_barplot_nostrip + p_alpha2 + plot_layout(widths = c(5, 1))
+
+cowplot::save_plot(
+  plot = p_combined,
+  filename = "output/p_combined_bar_alpha.pdf",
+  base_height = 10,
+  base_width = 16
+)
+```
+
+# Ordination
+
+```{r}
+ps.samples |> 
+  #ps_filter(depth != "US") |> 
+  tax_agg(rank = "Genus") |> 
+  ord_calc("PCA") |> 
+  ord_plot(shape = "depth", color = "inc_time_d_fct") +
+  facet_wrap(.~inc_temp_C_str, scales = "free") +
+  geom_point(size = 3, aes(color = inc_time_d_fct, shape = depth)) +
+  scale_color_viridis_d(option = "magma", end = 0.8) +
+  theme_bw() +
+  theme(aspect.ratio = 1)
+```
