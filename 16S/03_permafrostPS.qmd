@@ -104,17 +104,24 @@ p_barplot
 interestingGenera <- ps.samples |> tax_select("Archaea") |> tax_top(n = 10, rank = "Genus")
 
 ps.samples |> 
+  ps_mutate(
+    inc_time_d_fct = factor(
+      inc_time_d_fct, levels = c("180 days", "30 days", "7 days", "0 days"))
+  ) |> 
   comp_barplot(
   tax_level = "Genus",
   n_taxa = 7,
   palette = distinct_palette(7, pal = "kelly", add = "grey90"),
   tax_order = interestingGenera,
-  x = "incubation_time_d_fct",
+  x = "inc_time_d_fct",
 ) +
   coord_flip(ylim = c(0, 0.045)) +
   facet_grid(vars(depth, incubation_temp_C)) +
   labs(
     x = "Incubation time (days)"
+  ) +
+  theme(
+    legend.position = "left"
   )
 
   
@@ -198,25 +205,61 @@ p_barplot_nostrip <- p_barplot %+% theme(strip.text = element_blank(), strip.bac
 
 p_combined <- p_barplot_nostrip + p_alpha2 + plot_layout(widths = c(5, 1))
 
-cowplot::save_plot(
-  plot = p_combined,
-  filename = "output/p_combined_bar_alpha.pdf",
-  base_height = 10,
-  base_width = 16
-)
+# cowplot::save_plot(
+#   plot = p_combined,
+#   filename = "output/p_combined_bar_alpha.pdf",
+#   base_height = 10,
+#   base_width = 16
+# )
 ```
 
 # Ordination
 
+Bray-Curtis dissimilarity is a statistic used to quantify the dissimilarity in species composition between sites based on species counts. The Bray-Curtis dissimilarity $BC_{jk}$ between two sites, noted as j and k, is defined as:
+
+$$
+BC_{jk} = 1 - \frac{2C_{jk}}{S_j + S_k} = 1 - \frac{2 \sum_{i=1}^{p}min(N_{ij}, N_{ik})}{\sum_{i = 1}^{p} (N_{ij} + N_{ik})}
+$$
+
+Where $N_{ij}$ is the number of specimens i at site j, $N_{ik}$ is the number of specimens i at site k, and p is the total number of species in all the samples.
+
+BC dissimilarity is bounded between zero and one: 0 means the two sites have the same composition (sharing all species). 1 means that the two sites do not share any species.
+
+BC dissimilarity is sometimes incorrectly referred to a distance, but is in fact a dissimilarity. A distance obeys triangle inequality.
+
 ```{r}
-ps.samples |> 
-  #ps_filter(depth != "US") |> 
-  tax_agg(rank = "Genus") |> 
-  ord_calc("PCA") |> 
-  ord_plot(shape = "depth", color = "inc_time_d_fct") +
-  facet_wrap(.~inc_temp_C_str, scales = "free") +
-  geom_point(size = 3, aes(color = inc_time_d_fct, shape = depth)) +
-  scale_color_viridis_d(option = "magma", end = 0.8) +
+p_bray <- ps.samples |> 
+  ps_arrange(inc_time_d_fct) |> 
+  tax_transform("identity", rank = "Genus") |> 
+  dist_calc("bray") |> 
+  ord_calc("PCoA") |> 
+  ord_plot() +
+  scale_color_viridis_d(option = "magma", end = 0.9) +
+  ggforce::geom_link2(
+    aes(color = inc_time_d_fct, group = depth),
+    linewidth = 0.8, n = 500
+  ) +
+  # geom_path(aes(group = depth, color = inc_time_d_fct),
+  #           arrow = arrow(type = "closed", length = unit(0.25, "cm"))
+  #           ) +
+  geom_point(aes(color = inc_time_d_fct, shape = depth), size = 3) +
+  facet_wrap(vars(inc_temp_C_str)) +
+  labs(
+    color = "Incubation time",
+    shape = "Site"
+  ) +
   theme_bw() +
-  theme(aspect.ratio = 1)
+  theme(
+    aspect.ratio = 1,
+    strip.background = element_blank(),
+    strip.text = element_text(color = "black", face = "bold", size = 14)
+  )
+p_bray
+
+cowplot::save_plot(
+  filename = "output/p_bray.png",
+  plot = p_bray,
+  base_height = 5,
+  base_width = 11
+)
 ```
