@@ -7,3 +7,4 @@ fig_output/*
 cache/*
 #data/GC-IRMS/*
 *.pdf
+16S/output/p_bray.png
