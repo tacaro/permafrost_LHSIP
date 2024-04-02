@@ -103,7 +103,7 @@ p_barplot
 ```{r}
 interestingGenera <- ps.samples |> tax_select("Archaea") |> tax_top(n = 10, rank = "Genus")
 
-ps.samples |> 
+p_archaea_barplot <- ps.samples |> 
   ps_mutate(
     inc_time_d_fct = factor(
       inc_time_d_fct, levels = c("180 days", "30 days", "7 days", "0 days"))
@@ -123,7 +123,14 @@ ps.samples |>
   theme(
     legend.position = "left"
   )
+p_archaea_barplot
 
+cowplot::save_plot(
+  filename = "output/p_archaea_barplot.pdf",
+  plot = p_archaea_barplot,
+  base_height = 6,
+  base_width = 9
+)
   
 ```
 
@@ -234,19 +241,22 @@ p_bray <- ps.samples |>
   dist_calc("bray") |> 
   ord_calc("PCoA") |> 
   ord_plot() +
-  scale_color_viridis_d(option = "magma", end = 0.9) +
   ggforce::geom_link2(
     aes(color = inc_time_d_fct, group = depth),
     linewidth = 0.8, n = 500
   ) +
-  # geom_path(aes(group = depth, color = inc_time_d_fct),
-  #           arrow = arrow(type = "closed", length = unit(0.25, "cm"))
-  #           ) +
-  geom_point(aes(color = inc_time_d_fct, shape = depth), size = 3) +
+  geom_point(aes(fill = inc_time_d_fct, shape = depth), 
+             size = 3, color = "black", stroke = 1) +
+  scale_shape_manual(values = c(21, 22, 23, 24)) +
+  scale_color_viridis_d(option = "magma", end = 0.9) +
+  scale_fill_viridis_d(option = "magma", end = 0.9) +
   facet_wrap(vars(inc_temp_C_str)) +
   labs(
     color = "Incubation time",
     shape = "Site"
+  ) +
+  guides(
+    fill = "none"
   ) +
   theme_bw() +
   theme(
