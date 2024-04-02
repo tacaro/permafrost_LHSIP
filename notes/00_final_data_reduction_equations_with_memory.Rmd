@@ -1,0 +1,112 @@
+---
+title: "Calibration calculations explanation"
+output: html_document
+---
+
+The calibration of H-isotope measurements is conducted as follows. The primary measured signal of an analyte peak ($R_{peak}$) is reported vs. the H2 reference gas ($R_{H2}$) and constitutes the combination of the actual analyte and it's true isotopic composition with the blank background and its isotopic composition. In GC-IRMS, there is very little actual blank background signal because the baseline is already subtracted at the time of peak integration. However, there are other effects that approximate the impact of a blank such as memory effects from H sorbed in the system and potentially from the pyrolysis reactor. All of these affect the measured isotope signal in an area (or amplitude) dependent manner as they matter most for small peaks and least for big peaks. The resulting mass balance can be summarized as follows:
+
+# Mass Balance & true isotope values & delta space
+
+For a set of known standard analytes that we use for calibration (e.g. A7 or F8), we actually know the isotopic composition, but not relative to the H2 reference gas. We know it relative to the VSMOW international scale. This leads to the following expansion of the above equation. Calculations in ratio space work fine but the resulting calibration coefficients are not very intuitive quantities so it is worthwhile to switch to delta notation, which does not introduce any approximations or errors as long as no terms get dropped. The above equation can be transformed into delta space as follows: 
+
+$$
+\begin{aligned}
+R_{peak} &= \frac{A_{peak} - A_{mem}}{A_{peak}} R_{analyte} + \frac{A_{mem}}{A_{peak}} R_{mem} \\
+\delta_{peak/H2} &= \frac{R_{peak}}{R_{H2}} - 1 \\
+  &= \frac{A_{peak} - A_{mem}}{A_{peak}} \frac{R_{analyte}}{R_{VSMOW}} \frac{R_{VSMOW}}{R_{H2}} + \frac{A_{mem}}{A_{peak}} \frac{R_{mem}}{R_{H2}} - 1 \\
+  &= \frac{A_{peak} - A_{mem}}{A_{peak}} \left( \delta_{analyte/VSMOW} + 1 \right) \frac{R_{VSMOW}}{R_{H2}} + \frac{A_{mem}}{A_{peak}} \left( \delta_{mem/H2} + 1 \right) - 1  \\
+  &= \frac{R_{VSMOW}}{R_{H2}} \delta_{analyte/VSMOW} 
+  - \left(\frac{R_{VSMOW}}{R_{H2}} - 1 \right) \frac{A_{mem}}{A_{peak}} 
+  - \frac{R_{VSMOW}}{R_{H2}} \frac{A_{mem}}{A_{peak}} \delta_{analyte/VSMOW} \\  
+  &\;\;\;\; + \frac{A_{mem}}{A_{peak}} \delta_{mem/H2}  + \frac{R_{VSMOW}}{R_{H2}} - 1 \\
+  &= \left( \delta_{VSMOW/H2} + 1 \right) \cdot \delta_{analyte/VSMOW} 
+  - \delta_{VSMOW/H2} \cdot \frac{A_{mem}}{A_{peak}} 
+  -  \left( \delta_{VSMOW/H2} + 1 \right) \frac{A_{mem}}{A_{peak}} \delta_{analyte/VSMOW} \\ 
+  &\;\;\;\; + \frac{A_{mem}}{A_{peak}} \delta_{mem/H2}  + \delta_{VSMOW/H2} 
+\end{aligned}
+$$
+
+with the isotopic composition of the memory term modeled as a peak-area weighted average of previous peaks
+
+$$
+\begin{aligned}
+\delta_{mem/H2} &= \frac{ \sum_{i < peak} A_i \cdot \delta_{i/H2}}{\sum_{i < peak} A_i } \\
+\end{aligned}
+$$
+
+
+# Univariate Linear Regression
+
+For individual standard analyses (F8 or A7), all peaks have similar amplitudes/areas and we can use a univariate linear regression with $\delta_{analyte/VSMOW}$ as the sole dependent variable to approximate the above equation:
+
+$$
+\begin{aligned}
+\delta_{peak/H2} &= \beta_0 + \beta_1 \cdot \delta_{analyte/VSMOW}
+\end{aligned}
+$$
+
+with: 
+
+$$
+\begin{aligned}
+\beta_0 &= 
+  \frac{A_{mem}}{A_{peak}}  \cdot \delta_{mem/H2} - \frac{A_{mem}}{A_{peak}}  \cdot \delta_{VSMOW/H2} + \delta_{VSMOW/H2} \\
+  &=  \frac{A_{mem}}{A_{peak}} \left( \delta_{mem/H2} - \delta_{VSMOW/H2}\right) + \delta_{VSMOW/H2} \\
+\beta_1 &= \left(1 - \frac{A_{mem}}{A_{peak}} \right) \cdot \left( \delta_{VSMOW/H2} + 1 \right)
+\end{aligned}
+$$
+
+leading to estimates for $\delta_{H2/VSMOW}$ and $\frac{A_{mem}}{A_{peak}}$ (or $A_{mem}$ using the average analyte peak height) from the $\beta_0$ and $\beta_1$ equations.
+
+$$
+\begin{aligned}
+
+\delta_{H2/VSMOW} &= -\frac{\delta_{VSMOW/H2}}{\delta_{VSMOW/H2} + 1} = 
+  \frac{ (1 - \beta_1) \cdot \delta_{mem/H2} - \beta_0}{(1 + \delta_{mem/H2} ) \cdot \beta_1} 
+  \approx \frac{-\beta_0}{\beta_1} \\
+
+\frac{A_{mem}}{A_{peak}} &= \frac{1 + \beta_0 - \beta_1}{1 + \delta_{mem/H2}} \approx 1 + \beta_0 - \beta_1 \\
+& \rightarrow A_{mem} = \overline{A_{peak}} \cdot \left(1 + \beta_0 - \beta_1 \right)
+\end{aligned}
+$$
+
+The resulting values of $\delta_{H2/VSMOW}$ and $A_{mem}$ should be close to constant across all standard analyses (some deviations for small peaks are expected as $\delta_{mem/H2}$ becomes non-negligible) while $\frac{A_{mem}}{A_{peak}}$ should have an inverse dependence on area.
+
+
+# Multivariate Linear Regression (with memory effect)
+
+Across samples and standards with different peak intensities, a univariate linear regression is no longer adequate as the $A_{mem}/A_{peak}$ and $\delta_{mem/H2}$ terms are no neither constant nor negligible (unless all analyte and standard peaks have relatively large and very similar peak areas and isotopic compositions). Only the isotopic composition of the reference gas ($R_{H2} / R_{VSMOW}$) should be constant (for a single reference gas tank) and can usually be treated as constant. This leads to the following multivariate linear calibration regression:
+
+$$
+\begin{aligned}
+\delta_{peak/H2} &= 
+  \left( \delta_{VSMOW/H2} + 1 \right) \cdot \delta_{analyte/VSMOW} 
+  - \delta_{VSMOW/H2} \cdot \frac{A_{mem}}{A_{peak}} 
+  -  \left( \delta_{VSMOW/H2} + 1 \right) \frac{A_{mem}}{A_{peak}} \delta_{analyte/VSMOW}  
+  + \frac{A_{mem}}{A_{peak}} \delta_{mem/H2}  + \delta_{VSMOW/H2} \\
+  &= \beta_0 + \beta_1 \cdot \delta_{analyte/VSMOW} + \beta_2 \cdot \frac{1}{A_{peak}} + \beta_3 \cdot \frac{  \delta_{analyte/VSMOW}}{A_{peak}} + \beta_4 \cdot \frac{\delta_{mem/H2}}{A_{peak}}
+\end{aligned}
+$$
+
+with: 
+
+$$
+\begin{aligned}
+\beta_0 &= \delta_{VSMOW/H2} \\
+\beta_1 &= \delta_{VSMOW/H2} + 1  \\
+\beta_2 &= -\delta_{VSMOW/H2} \cdot A_{mem} \\
+\beta_3 &= - (\delta_{VSMOW/H2} + 1) \cdot A_{mem} \\
+\beta_4 &= A_{mem}
+\end{aligned}
+$$
+
+It is worth noting that this provides several independent measures of the offset of the reference gas tank and the apparent memory contribution. In practice these factors often have significant uncertainty associated with them (especially the $\beta_3$ cross term) and thus not recommended to use for anything but general sanity checks:
+
+$$
+\begin{aligned}
+\delta_{H2/VSMOW} &= -\frac{\delta_{VSMOW/H2}}{\delta_{VSMOW/H2} + 1} = \frac{-\beta_0}{\beta_0 + 1} =  \frac{1-\beta_1}{\beta_1} = -\frac{\beta_2}{\beta_2 - \beta_4} = -\frac{\beta_3 + \beta_4}{\beta_3} \\
+A_{mem} &= \beta_4 = -\frac{\beta_2}{\beta_0} = - \frac{\beta_3}{\beta_1}
+\end{aligned}
+$$
+
+

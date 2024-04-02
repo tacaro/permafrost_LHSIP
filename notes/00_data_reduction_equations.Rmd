@@ -1,0 +1,118 @@
+---
+title: "Calibration calculations explanation"
+output:
+  html_document: default
+  word_document: default
+---
+
+The calibration of H-isotope measurements is conducted as follows. The primary measured signal of an analyte peak ($R_{peak}$) is reported vs. the H2 reference gas ($R_{H2}$) and constitutes the combination of the actual analyte and it's true isotopic composition with the blank background and its isotopic composition. In GC-IRMS, there is very little actual blank background signal because the baseline is already subtracted at the time of peak integration. However, there are other effects that approximate the impact of a blank such as memory effects from H sorbed in the system and potentially from the pyrolysis reactor. All of these affect the measured isotope signal in an area (or amplitude) dependent manner as they matter most for small peaks and least for big peaks. The resulting mass balance can be summarized as follows:
+
+# Mass Balance
+
+$$
+\begin{aligned}
+\frac{R_{peak}}{R_{H2}} 
+  &=\frac{m_{S}}{m_{S}+m_{B}}\cdot\frac{R_{analyte}}{R_{H2}}+\frac{m_{B}}{m_{S}+m_{B}}\cdot\frac{R_{blank}}{R_{H2}} \\
+  &= \left(1-\frac{m_{B}}{m_{S}+m_{B}}\right)\cdot\frac{R_{analyte}}{R_{H2}}+\frac{m_{B}}{m_{S}+m_{B}}\cdot\frac{R_{blank}}{R_{H2}} \\
+  &= \frac{R_{analyte}}{R_{H2}} - \frac{m_{B}}{m_{S}+m_{B}} \cdot\frac{R_{analyte}}{R_{H2}}+\frac{m_{B}}{m_{S}+m_{B}}\cdot\frac{R_{blank}}{R_{H2}} 
+\end{aligned}
+$$
+
+
+# True Isotope Values
+
+For a set of known standard analytes that we use for calibration (e.g. A7 or F8), we actually know the isotopic composition, but not relative to the H2 reference gas. We know it relative to the VSMOW international scale. This leads to the following expansion of the above equation.
+
+$$
+\begin{aligned}
+\frac{R_{peak}}{R_{H2}} 
+  &= \frac{R_{analyte}}{R_{H2}} - \frac{m_{B}}{m_{S}+m_{B}} \cdot\frac{R_{analyte}}{R_{H2}}+\frac{m_{B}}{m_{S}+m_{B}}\cdot\frac{R_{blank}}{R_{H2}} \\
+  &= \frac{R_{analyte}}{R_{VSMOW}}\cdot\frac{R_{VSMOW}}{R_{H2}}-\frac{m_{B}}{m_{S}+m_{B}}\cdot\frac{R_{analyte}}{R_{VSMOW}}\cdot\frac{R_{VSMOW}}{R_{H2}}+\frac{m_{B}}{m_{S}+m_{B}}\cdot\frac{R_{blank}}{R_{VSMOW}}\cdot\frac{R_{VSMOW}}{R_{H2}}
+\end{aligned}
+$$
+
+
+
+# Delta Space
+
+Calculations in ratio space work fine but the resulting calibration coefficients are not very intuitive quantities so it is worthwhile to switch to delta notation, which does not introduce any approximations or errors as long as no terms get dropped. The above equation can be transformed into delta space as follows: 
+
+
+$$
+\begin{aligned}
+\delta_{peak/H2} &= \frac{R_{peak}}{R_{H2}} - 1 \\
+  &= \frac{R_{analyte}}{R_{VSMOW}}\cdot\frac{R_{VSMOW}}{R_{H2}}-\frac{m_{B}}{m_{S}+m_{B}}\cdot\frac{R_{analyte}}{R_{VSMOW}}\cdot\frac{R_{VSMOW}}{R_{H2}}+\frac{m_{B}}{m_{S}+m_{B}}\cdot\frac{R_{blank}}{R_{VSMOW}}\cdot\frac{R_{VSMOW}}{R_{H2}} - 1 \\
+  &= \left(\delta_{analyte/VSMOW}+1\right)\cdot\frac{R_{VSMOW}}{R_{H2}}-\frac{m_{B}}{m_{S}+m_{B}}\cdot\left(\delta_{analyte/VSMOW}+1\right)\cdot\frac{R_{VSMOW}}{R_{H2}}+\frac{m_{B}}{m_{S}+m_{B}}\cdot\left(\delta_{blank/VSMOW}+1\right)\cdot\frac{R_{VSMOW}}{R_{H2}}-1 \\
+  &= \delta_{analyte/VSMOW}\cdot\frac{R_{VSMOW}}{R_{H2}}-\frac{m_{B}}{m_{S}+m_{B}}\cdot\delta_{analyte/VSMOW}\cdot\frac{R_{VSMOW}}{R_{H2}}+\frac{m_{B}}{m_{S}+m_{B}}\cdot\delta_{blank/VSMOW}\cdot\frac{R_{VSMOW}}{R_{H2}}-1+\frac{R_{VSMOW}}{R_{H2}} 
+\end{aligned}
+$$
+
+# Univariate Linear Regression
+
+For individual standard analyses (F8 or A7), all peaks have similar amplitudes/areas and we can use a univariate linear regression with $\delta_{analyte/VSMOW}$ as the sole dependent variable to approximate the above equation:
+
+$$
+\begin{aligned}
+\delta_{peak/H2} &= \beta_0 + \beta_1 \cdot \delta_{analyte/VSMOW}
+\end{aligned}
+$$
+
+with: 
+
+$$
+\begin{aligned}
+\beta_0 &= \frac{m_B}{m_S + m_B} \cdot \delta_{blank/VSMOW} \cdot \frac{R_{VSMOW}}{R_{H2}} + \frac{R_{VSMOW}}{R_{H2}} -1 \approx \frac{R_{VSMOW}}{R_{H2}} -1 \\
+\beta_1 &= \frac{m_S}{m_S + m_B} \cdot \frac{R_{VSMOW}}{R_{H2}}
+\end{aligned}
+$$
+
+leading to estimates for $\delta_{H2/VSMOW}$, $\frac{m_S}{m_S + m_B}$ and $\frac{m_B}{m_S + m_B}$ from the $\beta_0$ and $\beta_1$ equations.
+
+$$
+\begin{aligned}
+\delta_{H2/VSMOW} &\approx \frac{-\beta_0}{\beta_0 + 1}  \\
+\frac{m_S}{m_S + m_B} &\approx \frac{\beta_1}{\beta_0 + 1} \\
+\frac{m_B}{m_S + m_B} &\approx 1 - \frac{\beta_1}{\beta_0 + 1}
+\end{aligned}
+$$
+
+The resulting values of $\delta_{H2/VSMOW}$ should be close to constant across all standard analyses (some deviations for small peaks are expected as $\frac{m_B}{m_S + m_B} \cdot \delta_{blank/VSMOW}$ becomes non-negligible). The resulting values of $\frac{m_S}{m_S + m_B}$ plotted vs. peak areas can provide clues as to the most appropriate way to account for peak amplitude/area effects (i.e the form of the $H(A)$ transfer function introduced in the next section).
+
+# Multivariate Linear Regression
+
+Across samples and standards with different peak intensities, a univariate linear regression is no longer adequate as the $\frac{m_B}{m_S + m_B}$ term is neither constant nor negligible (unless all analyte and standard peaks have relatively large and very similar peak areas). This requires introducing the $\frac{m_B}{m_S + m_B}$ term which relates to the area of the peak with some transfer function $H (A)$ as an additional dependent variable. $H (A)$ is rarely a linear transformation, more commonly takes forms such as $\log (A), \frac{1}{A}, \frac{1}{A^2}, \sqrt{A}, \text{etc.}$. The isotopic composition of the reference gas ($R_{H2} / R_{VSMOW}$) should be constant for each reference tank and can usually be treated as constant. This leads to the following multivariate linear calibration regression:
+
+$$
+\begin{aligned}
+\delta_{peak/H2} &= \beta_0 + \beta_1 \cdot \delta_{analyte/VSMOW} + \beta_2 \cdot H(A) + \beta_3 \cdot  \delta_{analyte/VSMOW}\cdot H(A)
+\end{aligned}
+$$
+
+with: 
+
+$$
+\begin{aligned}
+H(A) &= \frac{m_{B}}{m_{S}+m_{B}} \\
+\beta_0 &= \frac{R_{VSMOW}}{R_{H2}} -1 \\
+\beta_1 &= \frac{R_{VSMOW}}{R_{H2}} \\
+\beta_2 &= k\cdot \delta_{blank/VSMOW} \cdot \frac{R_{VSMOW}}{R_{H2}} \\
+\beta_3 &= - k\cdot \frac{R_{VSMOW}}{R_{H2}}
+\end{aligned}
+$$
+
+Where $k$ is the proportionality constant scaling the transfer function $H(A)$. Note that approximations of $\delta + 1 \approx 1$ are not recommended for hydrogen isotope systems because the deviation from the reference frame can be so great that this introduces significant error.
+
+It is worth noting that in theory this provides several independent measures of the offset of the reference gas tank as well as a measure of the theoretical blank isotope composition. In practice these factors often have significant uncertainty associated with them because the functional form of $H(A)$ is almost always an approximation and are thus not recommended to use for anything but general sanity checks. We commonly only use the intercept ($\beta_0$) to check the reference tank isotopic composition.
+
+$$
+\begin{aligned}
+\delta_{H2/VSMOW} &= \frac{-\beta_0}{\beta_0 + 1} \\
+\delta_{H2/VSMOW} &= \frac{1-\beta_1}{\beta_1} \\
+\delta_{blank/VSMOW} &= -\frac{\beta_2}{\beta_3}
+\end{aligned}
+$$
+
+
+# Application
+
+The above multivariate linear regression can be easily tested across all isotope standards with various functional forms of $H(A)$ and with / without the $\beta_2$ and $\beta_3$ terms (which should vanish at high signal intensities) using isoprocessor but the resulting regression should be evaluated carefully for the distribution of its residuals (should be random!) and overall error. It is recommended to exclude at least one peak of known isotopic composition from this calibration to independently estimate the measurement error after calibration (ideally across a wide range of peak intensities). For biphytane analysis we recommend using a hydrocarbon of known isotopic composition that behaves similarly during chromatography, such as C36 n-alkane. It is also very important to evaluate the range in intensities/areas of the calibration carfully as extrapolation of the $\beta_2$ and $\beta_3$ terms can lead to enormous errors and misleading results. Extrapolation outside the calibration range of intensities/areas is NOT recommended. We only ever do it for our internal standard for error estimation (nC36).
