@@ -209,6 +209,31 @@ growth_w_FID <- growth_data_tidy |>
   left_join(FID_data, by = c("sample_id", "site", "inc_temp_C", "inc_time_d", "compound", "fraction"))
 ```
 
+## Abundance-weighted mean
+
+We can aggregate our growth rate measurements into assemblage-level estimates of microbial community growth by calculating an abundance-weighted mean $(\bar{x})$:
+
+$$
+\bar{x} = \frac{ \sum_{i = 1}^{N} x_iw_i}{ \sum_{i = 1}^{N} w_i }
+$$
+
+Where $x_i$ is the isotopic fractional abundance of a compound $i$ and $w_i$ is the relative abundance (weighting) of compound $i$. Here, our weight (w) is the compound abundance determined by GC-FID: `mass_analyte_ng_per_g.FID` and our data (x) is the growth rate `u_d`.
+
+```{r}
+weighted_mean_growth_data <- growth_w_FID |> 
+  dplyr::group_by(site, inc_temp_C, inc_time_d, fraction) |> 
+  dplyr::summarise(
+    u_d = sum(u_d * mass_analyte_ng_per_g.FID, na.rm = TRUE) /
+      sum(mass_analyte_ng_per_g.FID, na.rm = TRUE),
+    .groups = "keep"
+  ) |> 
+  ungroup() |> 
+  mutate(
+    gen_d = log(2) / u_d, # calculate weighted mean gen time
+    compound = "Weighted Mean", # plotting identifier
+    )
+```
+
 # Plots
 
 ### Lipid abundance
@@ -236,6 +261,157 @@ PLFA_sums |>
 ```
 
 ## Fox prelim
+
+### Compound Specific µ with Mean
+
+```{r}
+p_ud_weighted <- growth_data |> 
+  filter(experiment == "Fox, AK") |> # filter out JCR
+  filter(!is.na(site)) |> # filter out site NA
+  # Add in weighted mean data:
+  bind_rows(weighted_mean_growth_data) |>
+  filter(site != "Surface") |> # plot surface sample separately
+  filter(inc_time_d == 30) |> # choose incubation time to focus on
+  filter(fraction == "phospho-IPL") |> # choose fraction
+  # factors helpful for plotting:
+  mutate(
+    inc_temp_C_str = factor(paste0(inc_temp_C, "C"), c("-4C", "4C", "12C")),
+    is_mean = if_else(compound == "Weighted Mean", true = TRUE, false = FALSE),
+    compound = str_replace(compound, "ω", "w")
+    ) |> 
+  # Plot it:
+  ggplot(
+    aes(
+      # reorder y variables in ascending order within each facet
+      y = tidytext::reorder_within(
+        compound, u_d, list(site, inc_temp_C)
+        ),
+      x = u_d
+    )
+  ) +
+  geom_point(
+    aes(shape = inc_temp_C_str, fill = inc_temp_C_str),
+    stroke = 1, size = 2,
+    color = "black"
+    ) +
+  scale_shape_manual(values = c(21, 22, 23)) +
+  ggrepel::geom_text_repel(
+    data = function(df) df |> filter(compound == "Weighted Mean"),
+    aes(
+      label = paste(formatC(u_d, format = "e", digits = 1), 
+                    " = \n", round(gen_d, 0), "days")
+      ),
+    nudge_x = 0.001,
+    nudge_y = -1,
+    color = "red",
+    size = 3,
+    segment.alpha = 0.5, segment.curvature = -1e-20
+    
+  ) +
+  scale_fill_manual(values = c("#3e0751", "#468e8c", "#f9e955")) +
+  facet_wrap(vars(inc_temp_C_str, site), ncol = 3, scales = "free_y") +
+  tidytext::scale_y_reordered() +
+  labs(
+    y = "", x = latex2exp::TeX("Compound-Specific Growth Rate $(d ^{-1})$")
+  ) +
+  guides(
+    color = "none",
+    shape = "none",
+    fill = "none"
+  ) +
+  theme_bw() +
+  theme(
+    panel.grid.minor = element_blank(),
+    panel.grid.major.y = element_blank(),
+    panel.grid.major.x = element_line(linetype = "dotted", color = "gray"),
+    strip.background = element_rect(fill = "black", color = "black"),
+    strip.text = element_text(color = "white", face = "bold")
+  )
+p_ud_weighted 
+
+# cowplot::save_plot(
+#   filename = "fig_output/p_ud_weighted.pdf",
+#   plot = p_ud_weighted,
+#   base_height = 9,
+#   base_width = 12
+# )
+```
+
+Make the same plot but with the surface samples:
+
+```{r}
+p_ud_weighted_surface <- growth_data |> 
+  filter(experiment == "Fox, AK") |> # filter out JCR
+  filter(!is.na(site)) |> # filter out site NA
+  # Add in weighted mean data:
+  bind_rows(weighted_mean_growth_data) |>
+  filter(site == "Surface") |> # plot surface sample separately
+  filter(inc_time_d == 30) |> # choose incubation time to focus on
+  filter(fraction == "phospho-IPL") |> # choose fraction
+  # factors helpful for plotting:
+  mutate(
+    inc_temp_C_str = factor(paste0(inc_temp_C, "C"), c("-4C", "4C", "12C")),
+    is_mean = if_else(compound == "Weighted Mean", true = TRUE, false = FALSE),
+    compound = str_replace(compound, "ω", "w")
+    ) |> 
+  # Plot it:
+  ggplot(
+    aes(
+      # reorder y variables in ascending order within each facet
+      y = tidytext::reorder_within(
+        compound, u_d, list(site, inc_temp_C)
+        ),
+      x = u_d
+    )
+  ) +
+  geom_point(
+    stroke = 1, size = 2, fill = "black",
+    color = "black"
+    ) +
+  ggrepel::geom_text_repel(
+    data = function(df) df |> filter(compound == "Weighted Mean"),
+    aes(
+      label = paste(formatC(u_d, format = "e", digits = 1), 
+                    " = \n", round(gen_d, 0), "days")
+      ),
+    nudge_x = 0.01,
+    nudge_y = -1,
+    color = "red",
+    size = 3,
+    segment.alpha = 0.5, segment.curvature = -1e-20
+    
+  ) +
+  #facet_wrap(vars(inc_temp_C_str, site), ncol = 3, scales = "free_y") +
+  tidytext::scale_y_reordered() +
+  #coord_cartesian(xlim = c(0, 0.25)) +
+  labs(
+    y = "", x = latex2exp::TeX("Compound-Specific Growth Rate $(day ^{-1})$"),
+    title = "Surface Permafrost"
+  ) +
+  guides(
+    color = "none",
+    shape = "none",
+    fill = "none"
+  ) +
+  theme_classic() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1), 
+    panel.grid.minor = element_blank(),
+    panel.grid.major.y = element_blank(),
+    panel.grid.major.x = element_line(linetype = "dotted", color = "gray"),
+    strip.background = element_rect(fill = "white", color = "white"),
+    aspect.ratio = 1,
+    plot.title = element_text(hjust = 0.5)
+  )
+p_ud_weighted_surface 
+
+# cowplot::save_plot(
+# filename = "fig_output/p_ud_weighted_surface2.pdf",
+# plot = p_ud_weighted_surface,
+# base_height = 5,
+# base_width = 4
+# )
+```
 
 #### F2H
 
@@ -337,7 +513,7 @@ p_fox_u_d_surface <- growth_data |>
   geom_point(aes(color = fraction, shape = fraction),
              size = 3) +
   scale_color_brewer(palette = "Set1")+
-  facet_wrap(inc_time_d_str~fraction, scales = "free_x") +
+  facet_wrap(vars(inc_time_d_str, fraction), scales = "free_x") +
   coord_cartesian(expand = FALSE, ylim = c(0, 17), xlim = c(0, 0.023)) +
   scale_x_continuous(
     sec.axis = sec_axis(
