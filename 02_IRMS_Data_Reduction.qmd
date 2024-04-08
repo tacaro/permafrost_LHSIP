@@ -228,7 +228,15 @@ iso_files_mapped[random] |> iso_summarize_peak_mappings()
 
 # Peak Table
 
-## Generate peak table and export
+## Calculate d3/2 vs reference gas
+
+Here we calculate the d2H versus the reference gas (H2).
+
+For each instrument run, reference gas (H2) is injected at the beginning and end of the run.
+
+1.  We measure the `r3/2` of each of these reference peaks as a function of their retention time and calculate a linear model of `r3/2` vs. `rt`.
+2.  We linearly interpolate this model across all retention times so that we have estimated reference gas values over the course of the run.
+3.  We calculate a delta value of d2H versus the reference gas where $\delta^{^2H}_{ref(H_2)} = \: ((^2R / ^2R_{ref}) - 1) * 1000 \: permil$
 
 ```{r}
 iso_peak_table <- iso_files_mapped |> 
@@ -262,6 +270,26 @@ iso_peak_table <- iso_files_mapped |>
     # mean amplitude of identified peaks
     mean_amp_identified = mean(amp2[!is.na(compound) & compound != "H2"], na.rm=TRUE)
   )
+
+# create a plot to inspect the reference gas change over time
+p_h2_lm <- iso_peak_table |> 
+  ggplot(aes(
+    x = rt, y = ref_ratio_at_rt,
+    group = file_id, label = Analysis
+  )) +
+  geom_line(alpha = 0.5) +
+  geom_point(
+    data = function(df) df |> filter(compound == "H2"),
+    aes(
+      x = rt,
+      y = `r3/2`,
+    )
+  ) +
+  labs(
+    y = "Ref Ratio"
+  ) +
+  theme_bw()
+p_h2_lm
 ```
 
 ## Reference peak outliers
