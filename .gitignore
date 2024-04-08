@@ -12,6 +12,8 @@
 *.docx
 *.xlsx
 *.csv
+*.js
+*.css
 *cache/**/*
 output/**/*
 plots/**/*
@@ -49,6 +51,7 @@ Thumbs.db
 .Rbuildignore
 packrat/lib*/
 packrat/src/
+bootstrap
 
 # exclude Python and Jupyter temp files
 .ipynb_checkpoints
