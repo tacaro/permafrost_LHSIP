@@ -28,7 +28,7 @@ editor_options:
 >
 > -   `at2H` refers to the fractional abundance $^2F$ expressed in units of atom percent (at. %).
 >
-> The primary measurement for isotopic calculations is `F2H`. For some plots, `at2H` may be used, or `at2H.ppm` (atom fraction in ppm instead of percent) may be used, but these can be calculated on-the-spot in the ggplot with in-line operations.
+> The primary measurement for SIP calculations is `F2H`. For some plots, `at2H` may be used, or `at2H.ppm` (atom fraction in ppm instead of percent) may be used, but this can be calculated on-the-spot in the ggplot call.
 >
 > Isodat .dxf files output isotopic data in two formats: d2H in permil vs. VSMOW and at2H (at. %).
 
@@ -109,14 +109,18 @@ iso_files <- iso_files_raw |>
     # what is the type of each analysis?
     analysis = parse_number(Analysis) |> as.integer(),
     type = case_when(
+      str_detect(`Identifier 1`, "p35") ~ "sample",
+      str_detect(`Identifier 1`, "p54") ~ "sample",
+      str_detect(`Identifier 1`, "p83") ~ "sample",
+      str_detect(`Identifier 1`, "pUS") ~ "sample",
+      str_detect(`Identifier 1`, "HDK") ~ "sample",
       str_detect(`Identifier 1`, "[Zz]ero")      ~ "on_off",
       str_detect(`Identifier 1`, "H3")           ~ "H3_factor",
       str_detect(`Identifier 1`, "F8")           ~ "F8",
       str_detect(`Identifier 1`, "FH_5")         ~ "FH5",
       str_detect(`Identifier 1`, "FSH_9")        ~ "FSH9",
       str_detect(`Identifier 1`, "BAME")         ~ "BAME",
-      str_detect(`Identifier 1`, "cHEX|[Bblank]")~ "blank",
-      TRUE                                       ~ "sample"
+      str_detect(`Identifier 1`, "cHEX|[Bblank]")~ "blank"
     ),
     # what is the injedction volume? infer from AS method
     injection_volume = str_extract(`Identifier 2`, "[0-9.]+u[lL]") |>
@@ -202,7 +206,7 @@ iso_files_mapped <-
 ```{r}
 # plot an example
 iso_files_mapped |>
-  iso_filter_files(Analysis %in% c("BF16202", "BF16241")) |>
+  iso_filter_files(sample_id %in% c("p54(12C)30d-F3", "HDK23-168")) |>
   iso_plot_continuous_flow_data(
     data = c(2), color = sample_id, panel = NULL,
     time_interval = c(550, 1500),
@@ -210,7 +214,8 @@ iso_files_mapped |>
     peak_label_filter = !compound %in% 
       c("H2") & data_wo_units == "2" & !is.na(d2H) & amp2 > 1,
     peak_label_options = list(size = 3)
-  ) + theme_classic() 
+  ) + theme_bw() +
+  facet_wrap(vars(sample_id), ncol = 1)
 ```
 
 ```{r}
@@ -219,7 +224,6 @@ set.seed(123)
 random <- sample(1:length(iso_files_mapped), size = 10)
 iso_files_mapped[random] |> iso_summarize_peak_mappings()
 ```
-
 
 # Peak Table
 
@@ -232,22 +236,29 @@ iso_peak_table <- iso_files_mapped |>
   # calculate d2H vs ref peak
   group_by(file_id) |>
   mutate(
+    # the reference ratio at a specific retention time:
     ref_ratio_at_rt = 
+      # linear model of
       lm(y ~ x, 
          data = tibble(
-           x = rt[calib_peak == TRUE], 
-           y = `r3/2`[calib_peak == TRUE])) |> 
-      predict(newdata = tibble(x = rt)) |> 
+           x = rt[calib_peak == TRUE], # retention time of H2 peak
+           y = `r3/2`[calib_peak == TRUE])) |> # versus the R2H of the H2 peak
+      predict(newdata = tibble(x = rt)) |> # use the lm and feed rt values in
       as.numeric(),
-    d2H_vs_H2 = (`r3/2` / ref_ratio_at_rt - 1) * 1000
+    d2H_vs_H2 = (`r3/2` / ref_ratio_at_rt - 1) * 1000 # switch to delta notation
   ) |>
   ungroup() |>
   iso_mutate_peak_table(
     group_by = file_id,
+    # rel area = area / area of all compound peaks
     rel_area = area2/sum(area2[!is.na(compound) & compound != "H2"], na.rm=TRUE),
+    # mean area = mean of all area
     mean_area = mean(area2, na.rm=TRUE),
+    # mean area of identified peaks = mean area where peak is mapped
     mean_area_identified = mean(area2[!is.na(compound) & compound != "H2"], na.rm=TRUE),
+    # standard deviation of identified peaks areas
     mean_area_identified_sd = sd(area2[!is.na(compound) & compound != "H2"], na.rm=TRUE),
+    # mean amplitude of identified peaks
     mean_amp_identified = mean(amp2[!is.na(compound) & compound != "H2"], na.rm=TRUE)
   )
 ```
@@ -255,24 +266,30 @@ iso_peak_table <- iso_files_mapped |>
 ## Reference peak outliers
 
 ```{r}
-# ref peak outlier cutoff
+# set the ref peak acceptable range as + or - 4 permil from the mean of all ref peaks
 pm_permil <- 4
 
+# make a tibble with just the H2 ref peaks in it:
 ref_peaks <- iso_peak_table |> filter(!is.na(ref_nr))
 
+# Examine how the reference peaks deviate and identify outliers:
 ref_peaks |>
   arrange(ref_nr, analysis) |>
   mutate(
+    # add a new sample label
     x = sprintf("%s: %s", analysis, type) |> as_factor(),
-    ref_info=paste0(ref_nr, ifelse(!is.na(calib_peak) & calib_peak,"*","")) |> as_factor()
+    # 
+    ref_info=paste0(ref_nr, ifelse(!is.na(calib_peak) & calib_peak,"*","")) |>
+      as_factor()
   ) |>
+  # use isoverse function to examine ref peaks
   iso_plot_ref_peaks(
     x = x, ratio=c('r3/2'), fill=ref_info,
     panel_scales="fixed"
   ) |>
   iso_mark_value_range(plus_minus_value = pm_permil, plus_minus_sd = c()) |> 
   iso_mark_outliers(plus_minus_value = pm_permil, label = analysis) +  
-  labs(x="Sequence #", fill="Reference\npeak")
+  labs(x="Sequence #", fill="Reference\npeak") 
 
 # mark analyses with ref peak outliers in dataset (vs. raw measured ratios)
 outliers <- ref_peaks |> 
@@ -292,8 +309,15 @@ sprintf("marking seq_nrs %s because %s", paste(outliers, collapse = ", "), msg) 
 # tag outliers
 iso_peak_table <- iso_peak_table |>
  mutate(ref_peak_outliers = analysis %in% outliers)
-```
 
+# which samples have outlying ref peaks?
+iso_peak_table |> 
+  filter(ref_peak_outliers) |> 
+  select(Analysis, sample_id, ref_peak_outliers) |> unique() |> 
+  gt::gt()
+
+# Looks like all samples with reference peak outliers are the extremely enriched 180d incubations
+```
 
 # Export
 
