@@ -6,7 +6,7 @@ editor_options:
   chunk_output_type: console
 ---
 
-## How does this work?
+# How does this work?
 
 1.  **Read and cache.** Our first step is to read in the raw .dxf files that are output from the IRMS instrument. These are large and unwieldy so our goal is to put them into an R-friendly data format. We read them in and do some cleanup using the `isoprocessor` and `isoreader` packages.
 
@@ -16,7 +16,7 @@ editor_options:
 
 4.  **Export peak table**. Once we have our relevant standards and samples, we want to export them as a peak table such that we can begin our calibration process. This occurs in file `TBD`.
 
-### Terminology
+## Terminology
 
 > A note on terminology throughout these scripts:
 >
@@ -32,7 +32,7 @@ editor_options:
 >
 > Isodat .dxf files output isotopic data in two formats: d2H in permil vs. VSMOW and at2H (at. %).
 
-## Setup
+# Setup
 
 ```{r}
 # the installation of these packages may be required
@@ -58,9 +58,12 @@ message("Using isoreader version ", packageVersion("isoreader"))
 message("Using isoprocessor version ", packageVersion("isoprocessor"))
 ```
 
-### Import IRMS Data
+# Load
+
+## Import IRMS Data
 
 ```{r}
+#| eval: false
 data_paths <- c(
   "data/GC-IRMS/raw_data/2023-09-05_PermafrostSet1_TAC_AEM/",
   "data/GC-IRMS/raw_data/2023-11-28_TAC-AEM_New-Reactor-Permafrost-FAMEs-Enriched/"
@@ -85,71 +88,72 @@ iso_files_raw <-
   iso_filter_files_with_problems()
     
 # Cache it!
-write_rds(iso_files_raw, "cache/iso_files_raw.RDS")
+iso_files_raw |> iso_save("cache/iso_files_raw.cf.rds")
 ```
-
-### Import Peak Map and ignored injection list
 
 ```{r}
-# this is a map of retention times for specific compounds across injections
-peak_map <- readxl::read_excel(path = "data/GC-IRMS/IRMS_peak_map.xlsx")
-
-# this is a list of analyses to ignore
-ignored_analyses <- readxl::read_excel("data/GC-IRMS/ignored_injection_list.xlsx") |> pull(Analysis)
+iso_files_raw <- iso_read_continuous_flow("cache/iso_files_raw.cf.rds") |>
+  # set vendor data table to isodat format
+  iso_set_peak_table_from_isodat_vendor_data_table() |>
+  # convert units from mV to V for amplitudes and area
+  iso_convert_peak_table_units(V = mV, Vs = mVs)
 ```
 
-### Process IRMS data
+## Process IRMS data
 
 ```{r}
 # process IRMS file information
 iso_files <- iso_files_raw |> 
-  # rename key file info columns
-  iso_rename_file_info(
-    analysis = Analysis, 
-    id1 = `Identifier 1`,
-    id2 = `Identifier 2`
-    ) |> 
   # parse text info into numbers
-  iso_parse_file_info(number = analysis) |> 
   iso_mutate_file_info(
     # what is the type of each analysis?
+    analysis = parse_number(Analysis) |> as.integer(),
     type = case_when(
-      str_detect(file_id, "[Zz]ero")      ~ "on_off",
-      str_detect(file_id, "H3")           ~ "H3_factor",
-      str_detect(file_id, "F8")           ~ "F8_std",
-      str_detect(file_id, "FH_5")           ~ "FH5_std",
-      str_detect(file_id, "FSH_9")           ~ "FSH9_std",
-      str_detect(file_id, "blank")           ~ "blank",
-      str_detect(file_id, "Blank")           ~ "blank",
-      str_detect(file_id, "no inject")           ~ "blank",
-      str_detect(file_id, "cleaning")           ~ "blank",
-      str_detect(file_id, "BAME")           ~ "BAME",
-      TRUE                            ~ "sample"
+      str_detect(`Identifier 1`, "[Zz]ero")      ~ "on_off",
+      str_detect(`Identifier 1`, "H3")           ~ "H3_factor",
+      str_detect(`Identifier 1`, "F8")           ~ "F8",
+      str_detect(`Identifier 1`, "FH_5")         ~ "FH5",
+      str_detect(`Identifier 1`, "FSH_9")        ~ "FSH9",
+      str_detect(`Identifier 1`, "BAME")         ~ "BAME",
+      str_detect(`Identifier 1`, "cHEX|[Bblank]")~ "blank",
+      TRUE                                       ~ "sample"
     ),
+    # what is the injedction volume? infer from AS method
+    injection_volume = str_extract(`Identifier 2`, "[0-9.]+u[lL]") |>
+      parse_number() |> iso_double_with_units("uL"),
     # what was the concentration? (assuming Preparation = concentration or volume)
     concentration = 
-      ifelse(type == "std",  
-             str_extract(Preparation, "[0-9.]+ ?ng( per |/)uL") %>% 
-               parse_number() %>% iso_double_with_units("ng/uL"),
-             NA),
+      ifelse(
+        str_detect(type, "std"),  
+        str_extract(Preparation, "[0-9.]+ ?ng( per |/)u[Ll]") |> 
+          parse_number() |> iso_double_with_units("ng/uL"),
+        NA),
+    rep = !is.na(Comment) & str_detect(Comment, "rep"),
     # what folder are the data files in? (assuming folder = sequence)
     folder = basename(dirname(file_path))
   ) |> 
-  iso_filter_files(!type %in% c("blank", "BAME", "H3_factor")) |>
   # focus only on the relevant file info, discarding the rest
-  iso_select_file_info(folder, analysis, file_datetime, id1, type, concentration) |> 
-  iso_set_peak_table_from_isodat_vendor_data_table() |> 
-    # convert units from mV to V for amplitudes and area
-    iso_convert_peak_table_units(V = mV, Vs = mVs)
+  iso_select_file_info(
+    folder, Analysis, analysis, file_datetime, sample_id = `Identifier 1`, 
+    type, rep, injection_volume, concentration
+  )
+
+# show the first few rows
+iso_files[1:10] |> iso_get_file_info() |> knitr::kable()
+
+# summarize the types
+iso_files |> iso_get_file_info() |> count(type) |> arrange(desc(n))
 ```
 
-### Plot an example chromatogram
+## Plot an example chromatogram
 
 ```{r}
-iso_files[100] |>  # choosing arbitrary file to plot
+iso_files |>  
+  # choosing arbitrary file to plot
+  iso_filter_files(Analysis == "BF16202") |>
   iso_plot_continuous_flow_data(
     # select data and aesthetics
-    data = c(2), color = id1, panel = id1,
+    data = c(2), color = sample_id, panel = NULL,
     # zoom in on time interval
     time_interval = c(550, 1500),
     # peak labels for all peaks > 2V
@@ -157,13 +161,11 @@ iso_files[100] |>  # choosing arbitrary file to plot
     peak_marker = FALSE,
     peak_label = iso_format(rt),
     #peak_label_size = 3,
-    peak_label_filter = analysis == 5685 & amp2 > 1
-  ) +
-    theme_classic() +
-    theme(strip.background = element_blank())
+    peak_label_filter = amp2 > 1
+  ) + theme_classic() 
 ```
 
-### Inspect the file info
+## Inspect the file info
 
 ```{r}
 iso_files |> 
@@ -174,63 +176,137 @@ iso_files |>
   gt::data_color(columns = type, palette = "Set1") 
 ```
 
-### Generate peak table and export
+# Map
+
+## Map peaks and filter out problematic injections
 
 ```{r}
-iso_peak_table <- iso_files |> 
-  iso_get_peak_table() |> 
-  # remove blanks, BAMEs, and H3s
-  select(file_id, everything()) |> 
-  mutate(
-    Analysis = paste0("BF", str_extract(file_id, "(?<=BF)\\d{5}")),
-    sample_id = str_replace(file_id, "BF\\d+|\\.dxf", ""),
-    sample_id = str_replace(sample_id, ".dxf", ""),
-    sample_id = str_replace(sample_id, "__", ""),
-    rep = if_else(
-      str_detect(file_id, "rep"),
-      true = 2,
-      false = 1
-    )
-  ) |> 
-  select(file_id, Analysis, sample_id, rep, everything()) |> 
-  mutate(
-    type = case_when(
-      str_detect(sample_id, "F8") ~ "F8",
-      str_detect(sample_id, "FH_5") ~ "FH5",
-      str_detect(sample_id, "FSH_9") ~ "FSH9",
-      str_detect(sample_id, "F9") ~ "FSH9",
-      TRUE ~ "sample"
-    )
-  ) |> 
-  filter(!Analysis %in% ignored_analyses) # remove analyses we want to ignore
+# this is a map of retention times for specific compounds across injections
+peak_map <- readxl::read_excel(path = "data/GC-IRMS/IRMS_peak_map.xlsx")
 
-```
+# this is a list of analyses to ignore
+ignored_analyses <- readxl::read_excel("data/GC-IRMS/ignored_injection_list.xlsx") |> pull(Analysis)
 
-## Map peaks
-
-```{r}
-iso_peak_table_mapped <- iso_peak_table |> 
+# mapped peaks
+iso_files_mapped <- 
+  iso_files |> 
+  # remove analyses that were misinjections
+  filter(!Analysis %in% ignored_analyses) |>
+  # map samples and standards peaks (no BAMEs mapped?)
+  iso_filter_files(type %in% c("F8", "FH5", "FSH9", "sample")) |>
   iso_map_peaks(peak_map, map_id = Analysis)
 ```
 
-Now we can inspect the mapped peak table
+## Inspect mapped peaks
 
 ```{r}
-# inspect samples
-iso_peak_table_mapped |> pull(sample_id) |> unique()
-
-# inspect compounds
-iso_peak_table_mapped |> pull(compound) |> unique()
+# plot an example
+iso_files_mapped |>
+  iso_filter_files(Analysis %in% c("BF16202", "BF16241")) |>
+  iso_plot_continuous_flow_data(
+    data = c(2), color = sample_id, panel = NULL,
+    time_interval = c(550, 1500),
+    peak_label=iso_format(compound, rt, d2H, signif = 3),
+    peak_label_filter = !compound %in% 
+      c("H2") & data_wo_units == "2" & !is.na(d2H) & amp2 > 1,
+    peak_label_options = list(size = 3)
+  ) + theme_classic() 
 ```
+
+```{r}
+# peak mappings summary (a few random files)
+set.seed(123)
+random <- sample(1:length(iso_files_mapped), size = 10)
+iso_files_mapped[random] |> iso_summarize_peak_mappings()
+```
+
+
+# Peak Table
+
+## Generate peak table and export
+
+```{r}
+iso_peak_table <- iso_files_mapped |> 
+  # focus 
+  iso_get_peak_table(include_file_info = everything()) |> 
+  # calculate d2H vs ref peak
+  group_by(file_id) |>
+  mutate(
+    ref_ratio_at_rt = 
+      lm(y ~ x, 
+         data = tibble(
+           x = rt[calib_peak == TRUE], 
+           y = `r3/2`[calib_peak == TRUE])) |> 
+      predict(newdata = tibble(x = rt)) |> 
+      as.numeric(),
+    d2H_vs_H2 = (`r3/2` / ref_ratio_at_rt - 1) * 1000
+  ) |>
+  ungroup() |>
+  iso_mutate_peak_table(
+    group_by = file_id,
+    rel_area = area2/sum(area2[!is.na(compound) & compound != "H2"], na.rm=TRUE),
+    mean_area = mean(area2, na.rm=TRUE),
+    mean_area_identified = mean(area2[!is.na(compound) & compound != "H2"], na.rm=TRUE),
+    mean_area_identified_sd = sd(area2[!is.na(compound) & compound != "H2"], na.rm=TRUE),
+    mean_amp_identified = mean(amp2[!is.na(compound) & compound != "H2"], na.rm=TRUE)
+  )
+```
+
+## Reference peak outliers
+
+```{r}
+# ref peak outlier cutoff
+pm_permil <- 4
+
+ref_peaks <- iso_peak_table |> filter(!is.na(ref_nr))
+
+ref_peaks |>
+  arrange(ref_nr, analysis) |>
+  mutate(
+    x = sprintf("%s: %s", analysis, type) |> as_factor(),
+    ref_info=paste0(ref_nr, ifelse(!is.na(calib_peak) & calib_peak,"*","")) |> as_factor()
+  ) |>
+  iso_plot_ref_peaks(
+    x = x, ratio=c('r3/2'), fill=ref_info,
+    panel_scales="fixed"
+  ) |>
+  iso_mark_value_range(plus_minus_value = pm_permil, plus_minus_sd = c()) |> 
+  iso_mark_outliers(plus_minus_value = pm_permil, label = analysis) +  
+  labs(x="Sequence #", fill="Reference\npeak")
+
+# mark analyses with ref peak outliers in dataset (vs. raw measured ratios)
+outliers <- ref_peaks |> 
+  iso_identify_outliers(
+    y = 1000 * (`r3/2`/mean(`r3/2`) - 1), 
+    plus_minus_value = pm_permil, 
+    group_by = file_id
+  ) |> 
+  filter(is_outlier) |> 
+  pull(analysis) |> 
+  unique()
+
+msg <- sprintf("ref peaks deviate > %s permil in r3/2", pm_permil)
+sprintf("marking seq_nrs %s because %s", paste(outliers, collapse = ", "), msg) |> 
+  message()
+
+# tag outliers
+iso_peak_table <- iso_peak_table |>
+ mutate(ref_peak_outliers = analysis %in% outliers)
+```
+
 
 # Export
 
+Export just the analyte peaks (not the H2 peaks)
+
 ```{r}
 # write .xlsx to data directory
-iso_peak_table_mapped |> 
+iso_peak_table |> 
+  filter(is.na(ref_nr)) |>
   writexl::write_xlsx(path = "data/GC-IRMS/iso_peak_table_mapped.xlsx")
 
 # write .RDS to cache
-iso_peak_table_mapped |> 
+iso_peak_table |> 
+  filter(is.na(ref_nr)) |>
   write_rds(file = "cache/iso_peak_table_mapped.RDS")
 ```
