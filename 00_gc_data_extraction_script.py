@@ -2,6 +2,7 @@ import numpy as np
 import pandas as pd
 import os
 
+# A quick little python script for iteratively parsing .RES files from SRI GC and outputting the results as a .csv
 
 # FUNCTION DEFINITION
 
