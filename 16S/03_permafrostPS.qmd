@@ -299,7 +299,7 @@ PLFA_data
 
 ps.samples.PLFA_melted <- ps.samples |> 
   ps_melt() |> 
-  left_join(PLFA_data, by = c("depth", "incubation_temp_C")) |> 
+  left_join(PLFA_data, by = c("depth", "incubation_temp_C", "inc_time_d")) |> 
   group_by(Sample) |> 
   mutate(
     total_reads = sum(Abundance, na.rm = TRUE),
@@ -310,11 +310,57 @@ ps.samples.PLFA_melted <- ps.samples |>
 
 ```{r}
 ps.samples.PLFA <- ps.samples |> 
-  ps_join(PLFA_data, by = c("depth", "incubation_temp_C"))
+  ps_join(PLFA_data, by = c("depth", "incubation_temp_C", "inc_time_d")) |> 
+  # transform to relative abundance
+  transform_sample_counts(function(x){x/sum(x)})
+
+for(n in 1:nsamples(ps.samples.PLFA)) {
+  otu_table(ps.samples.PLFA)[,n] <- otu_table(ps.samples.PLFA)[,n]*sample_data(ps.samples.PLFA)$total_PLFA_ng_per_g [n]
+}
 
 
-ps.samples.abs <-  ps.samples.PLFA |> 
-  transform_sample_counts(
-    function(x) (x/sum(x)) * biomass_mg
-    )
+p_ps.samples_PLFA <- ps.samples.PLFA |> 
+  ps_mutate(
+    inc_time_d_fct = factor(
+      inc_time_d_fct, levels = c("180 days", "30 days", "7 days", "0 days"))
+  ) |> 
+  tax_agg("Genus") |> 
+  comp_barplot(tax_level = "Genus",
+               tax_transform_for_plot = "identity",
+               x = "inc_time_d_fct",
+               n_taxa = 40,
+               ) +
+  coord_flip() +
+  facet_grid(vars(depth, incubation_temp_C), scales = "free_x") +
+  labs(x = "Incubation time (days)",
+       y = "PLFA-Scaled Abundance (ng biomass/g)") +
+  theme(
+    legend.position = "left"
+  ) +
+  guides(
+    fill = guide_legend(ncol = 2)
+  )
+p_ps.samples_PLFA
+
+p_PLFA <- PLFA_data |> 
+  mutate(inc_time_d_str = paste0(inc_time_d, " days")) |> 
+  mutate(inc_time_d_fct = factor(inc_time_d_str, levels = c("180 days", "30 days", "7 days", "0 days"))) |> 
+  ggplot() +
+  aes(
+    x = inc_time_d_fct,
+    y = total_PLFA_ng_per_g / 1000,
+    fill = as.factor(incubation_temp_C)
+  ) +
+  geom_path(aes(group = depth)) +
+  geom_point(shape = 21) +
+  scale_fill_viridis_d() +
+  scale_y_continuous() +
+  coord_flip() +
+  facet_grid(vars(depth, incubation_temp_C)) +
+  labs(y = "PLFA Biomass (µg/g)", x = "") +
+  theme_bw() +
+  theme(
+    legend.position = "None"
+  )
+p_PLFA
 ```
