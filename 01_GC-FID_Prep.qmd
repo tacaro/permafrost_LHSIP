@@ -386,7 +386,7 @@ FID_absolute <- FID_samples |>
 saveRDS(PAIBE_external_standard, "cache/PAIBE_standard.RDS")
 saveRDS(FID_sample_results, "cache/FID_sample_results.RDS")
 saveRDS(FID_samples, "cache/FID_samples.RDS")
-saveRDS(FID_absolute, "cache/FID_data_export.RDS")
+saveRDS(FID_absolute, "cache/FID_absolute_quant.RDS")
 
 # remove some global variables that arent useful for plotting
 rm(FID_all_data_F2s)
