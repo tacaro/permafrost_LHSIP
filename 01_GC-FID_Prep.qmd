@@ -299,7 +299,7 @@ FID_export <- FID_samples |>
 
 ## Calculate Extraction/Derivitization Efficiency
 
-# 21:0 PC (Derivatization Efficiency)
+### 21:0 PC (Derivatization Efficiency)
 
 Both extraction and derivatization efficiency are reported as yield fractions (not percent yields).
 
@@ -320,6 +320,8 @@ mean_derivatization_efficiency
 ```
 
 So on average our derivatization has 79.30% yield.
+
+### 23:0 PC (Extraction Efficiency)
 
 The 23PC goes through *both* extraction and derivatization, so we can consider it a "full-process" internal standard that is a combination of both extraction and derivatization yield efficiency.
 
@@ -378,6 +380,21 @@ FID_absolute <- FID_samples |>
     # we extracted 5g of sample, so normalize to g sample
     abs_mass_analyte_total_ng_per_g = abs_mass_analyte_total_ng / 5
     )
+```
+
+### Total biomass calculation
+
+We can estimate the total PLFA/GLFA content of the samples by summing the absolute abundances of the identified peaks.
+
+```{r}
+total_PLFA <- FID_absolute |> 
+  filter(fraction == "F3") |> # only sum PLFAs
+  group_by(core, temp) |> 
+  summarise(total_PLFA_ng_per_g = sum(abs_mass_analyte_total_ng_per_g, 
+                                      na.rm = TRUE)) |> 
+  ungroup()
+
+saveRDS(total_PLFA, file = "cache/total_PLFA.rds")
 ```
 
 ## Export Cache and clean environment
