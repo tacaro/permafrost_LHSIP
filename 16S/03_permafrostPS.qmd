@@ -22,8 +22,6 @@ ps <- readRDS("permafrost16S_processed_filt_ps.rds")
 
 # Validate the PS object
 phyloseq_validate(ps)
-
-# 
 ```
 
 phyloseq checks that your sample and taxa names are consistent across the different slots of the phyloseq object. microViz provides [`phyloseq_validate()`](https://david-barnett.github.io/microViz/reference/phyloseq_validate.html) to check for and fix other possible problems with your phyloseq that might cause problems in later analyses. It is recommended to run this at the start of your analyses, and fix any problems identified.
@@ -35,7 +33,24 @@ ps <- tax_fix(ps)
 phyloseq_validate(ps)
 ```
 
-### Separate blanks from samples
+## Load PLFA abundance data
+
+We can estimate the total biomass in a sample with our PLFA extraction data, which was quantified by GC-FID.
+
+```{r}
+PLFA_data <- read_rds("data/total_PLFA.rds") |> 
+  rename(depth = core,
+         incubation_temp_C = temp) |> 
+  mutate(incubation_temp_C = as.factor(incubation_temp_C),
+         depth = case_when(depth == "35m" ~ "35",
+                           depth == "54m" ~ "54",
+                           depth == "83m" ~ "83",
+                           TRUE ~ depth),
+         depth = as.factor(depth),
+         )
+```
+
+## Separate blanks from samples
 
 ```{r}
 ps.samples <- ps |> 
@@ -64,7 +79,7 @@ ps.blanks <- ps |>
 sample_names(ps.blanks)
 ```
 
-### Inspect the blanks
+## Inspect the blanks
 
 ```{r}
 ps.blanks |> plot_bar(fill = "Phylum")
@@ -272,4 +287,34 @@ cowplot::save_plot(
   base_height = 5,
   base_width = 11
 )
+```
+
+# Calculate biomass-normalized abundance
+
+This is an estimation of taxonomic absolute abundance which multiplies relative abundance by the total amount of intact biomass in the sample, as a first order approximation
+
+```{r}
+PLFA_data
+
+
+ps.samples.PLFA_melted <- ps.samples |> 
+  ps_melt() |> 
+  left_join(PLFA_data, by = c("depth", "incubation_temp_C")) |> 
+  group_by(Sample) |> 
+  mutate(
+    total_reads = sum(Abundance, na.rm = TRUE),
+    relative_abundance = Abundance / total_reads,
+    biomass_normalized_abundance = relative_abundance * total_PLFA_ng_per_g
+  )
+```
+
+```{r}
+ps.samples.PLFA <- ps.samples |> 
+  ps_join(PLFA_data, by = c("depth", "incubation_temp_C"))
+
+
+ps.samples.abs <-  ps.samples.PLFA |> 
+  transform_sample_counts(
+    function(x) (x/sum(x)) * biomass_mg
+    )
 ```
