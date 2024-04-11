@@ -306,99 +306,57 @@ Both extraction and derivatization efficiency are reported as yield fractions (n
 Calculate derivatization efficiency for both F3s and F2s by dividing the initial 21PC quantity by the estimated ng based on peak area.
 
 ```{r}
-
 FID_21PC <- FID_samples |> 
   filter(`Peak Name` == "21:0") |> 
-  select(sample, `Peak Name`, mass_analyte_total_ng, core, temp, inc_time_d, fraction) |> 
+  select(sample, `Peak Name`, mass_analyte_total_ng,
+         core, temp, inc_time_d, fraction) |> 
   rename(mass_21PC_ng = mass_analyte_total_ng) |> 
   mutate(initial_21PC_ng = 10000) |> 
-  mutate(deriv_efficiency = mass_21PC_ng / initial_21PC_ng)
-  
+  mutate(deriv_yield = mass_21PC_ng / initial_21PC_ng)
+
+mean_derivatization_efficiency <- FID_21PC |> pull(deriv_yield) |> mean()
+mean_derivatization_efficiency
 ```
 
-Calculate extraction efficiency for *only F3s* by dividing initial 23PC quantity by the estimated ng based on peak area. We do not do this for F2s because 23PC is removed from F2s during the silica chromatography step. The mean extraction efficiency for F3s will be applied to the F2s, with the assumption being that phospholipids extract at similar efficiency to glycolipids.
+So on average our derivatization has 79.30% yield.
+
+The 23PC goes through *both* extraction and derivatization, so we can consider it a "full-process" internal standard that is a combination of both extraction and derivatization yield efficiency.
+
+We can calculate our extraction efficiency using the formula for a multi-step reaction yield. The overall yield of a multi-step reaction/process is calculated by multiplying the partial yields of each of the one-step reactions:
+
+$$
+Total \: yield(\%) = y_1 \times y_2 \times ... etc. \times 100\%
+$$
+
+where $y_i$ are single-step reaction yields of the multi-step reaction. Rearranging our reaction scheme:
+
+$$
+\begin{aligned}
+TY &= y_{deriv} \times y_{extr} \\
+\frac{TY}{y_{deriv}} &= y_{extr}
+\end{aligned}
+$$
 
 ```{r}
 # 23:0 PC (Extraction Efficiency)
 FID_23PC <- FID_samples |> 
-  filter(fraction == "F3", `Peak Name` == "23:0") |> # focus only on F3s but apply this extraction efficieny to F2s
-  select(sample, `Peak Name`, mass_analyte_total_ng, core, temp, inc_time_d, fraction) |> 
+  # focus only on F3s but apply this extraction efficieny to F2s
+  filter(fraction == "F3", `Peak Name` == "23:0") |> 
+  select(sample, `Peak Name`, mass_analyte_total_ng, 
+         core, temp, inc_time_d, fraction) |> 
+  left_join(FID_21PC |> select(sample, deriv_yield), by = "sample") |> 
   rename(mass_23PC_ng = mass_analyte_total_ng) |> 
   mutate(initial_23PC_ng = 50000) |> #50 ug to ng
-  mutate(extraction_efficiency = mass_23PC_ng / initial_23PC_ng)
+  mutate(full_yield = mass_23PC_ng / initial_23PC_ng) |> 
+  mutate(extraction_yield = full_yield /deriv_yield)
 
-mean_extraction_efficiency <- FID_23PC |> 
-  summarize(extraction_efficiency = mean(extraction_efficiency))
+mean_full_process_yield <- FID_23PC |> pull(full_yield) |> mean()
+mean_full_process_yield
+mean_extraction_efficiency <- FID_23PC |> pull(extraction_yield) |> mean()
+mean_extraction_efficiency
 ```
 
-Plot the extraction and derivatization efficiency
-
-```{r}
-FID_23PC |> 
-  ggplot(
-    aes(
-      x = core,
-      y = extraction_efficiency,
-      color = as.factor(temp),
-      shape = fraction
-    )
-  ) +
-  geom_point() +
-  #geom_boxplot(width = 0.25) +
-  lemon::facet_rep_wrap(vars(inc_time_d)) +
-  coord_cartesian(ylim = c(0, .20)) +
-  scale_y_continuous(labels = scales::label_percent(),
-                     breaks = c(0, .05, .10, .15, .2),
-                     sec.axis = dup_axis()) +
-  scale_color_brewer(palette = "Set1") +
-  labs(x = "",
-       y = "Extraction Efficiency",
-       color = "Incubation Temperature (C)") +
-  theme_bw() +
-  theme(
-    legend.position= "bottom",
-    strip.background = element_rect(fill = "black"),
-    strip.text = element_text(color = "white"),
-    axis.ticks = element_line(color = "black"),
-    axis.ticks.length = unit(-2.75, "pt"),
-    axis.title.y.right = element_blank(),
-    axis.text.y.right = element_blank()
-    )
-
-
-```
-
-```{r}
-FID_21PC |> 
-  ggplot(
-    aes(
-      x = core,
-      y = deriv_efficiency,
-      color = as.factor(temp),
-      shape = fraction
-    )
-  ) +
-  geom_point() +
-  #geom_boxplot() +
-  lemon::facet_rep_wrap(vars(inc_time_d)) +
-  scale_y_continuous(labels = scales::label_percent(),
-                     sec.axis = dup_axis()) +
-  scale_color_brewer(palette = "Set1") +
-  coord_cartesian(ylim = c(0, 1)) +
-  labs(x = "",
-       y = "Derivatization Efficiency",
-       color = "Incubation Temperature (C)") +
-  theme_bw() +
-  theme(
-    legend.position= "bottom",
-    strip.background = element_rect(fill = "black"),
-    strip.text = element_text(color = "white"),
-    axis.ticks = element_line(color = "black"),
-    axis.ticks.length = unit(-2.75, "pt"),
-    axis.title.y.right = element_blank(),
-    axis.text.y.right = element_blank()
-    )
-```
+So our mean full-process yield is 9.95 % and our extraction yield is 11.34%.
 
 ## Export Cache and clean environment
 
