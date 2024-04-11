@@ -389,7 +389,7 @@ We can estimate the total PLFA/GLFA content of the samples by summing the absolu
 ```{r}
 total_PLFA <- FID_absolute |> 
   filter(fraction == "F3") |> # only sum PLFAs
-  group_by(core, temp) |> 
+  group_by(core, temp, inc_time_d) |> 
   summarise(total_PLFA_ng_per_g = sum(abs_mass_analyte_total_ng_per_g, 
                                       na.rm = TRUE)) |> 
   ungroup()
@@ -435,6 +435,16 @@ FID_absolute |>
   labs(
     x = "Incubation Time", y = "Compound Mass (µg / g permafrost)"
   ) +
+  theme_bw()
+
+total_PLFA |> 
+  ggplot(
+    aes(x = inc_time_d,
+        y = total_PLFA_ng_per_g)
+  ) +
+  geom_point() +
+  geom_line() +
+  facet_wrap(core~temp, scales = "free") +
   theme_bw()
 ```
 
