@@ -203,7 +203,7 @@ p_alpha2 <- ps.samples |>
   theme_bw() +
   theme(
     strip.background = element_rect(fill = "black"),
-    strip.text = element_text(color = "white", face = "bold"),
+    strip.text = element_text(color = "white", face = "bold", size = 2),
     legend.position = "None",
     axis.text.y = element_blank(),
     axis.ticks.y = element_blank()
@@ -360,7 +360,25 @@ p_PLFA <- PLFA_data |>
   labs(y = "PLFA Biomass (µg/g)", x = "") +
   theme_bw() +
   theme(
-    legend.position = "None"
+    legend.position = "None",
+    strip.text = element_text(size = 2),
+    axis.text.y = element_blank(),
+    axis.ticks.y = element_blank()
   )
 p_PLFA
+```
+
+# New combined plot
+
+```{r}
+p_combined_PLFA <- cowplot::plot_grid(
+  p_barplot, p_PLFA, p_alpha2,
+  nrow = 1, rel_widths = c(0.74, 0.13, 0.13)
+)
+p_combined_PLFA
+
+cowplot::save_plot(
+  filename = "output/combined_barplot_w_PLFA.pdf",
+  plot = p_combined_PLFA, base_height = 10, base_width = 14
+)
 ```
