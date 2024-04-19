@@ -543,34 +543,37 @@ analytes_peak_table_w_ideal_calib <-
   left_join(
     global_calibs_w_ranges |> iso_get_calibration_range() |> 
       filter(term == "d2H_vs_H2") |> 
-      select("folder", "standards", "d2H_calib", "max_d2H_vs_H2" = "max"),
+      select("folder", "standards", "d2H_calib", "calib_max_d2H_vs_H2" = "max"),
     by = c("folder", "standards", "d2H_calib")
   ) |>
-  # decide which calibration has the ideal range for each analysis
+  # decide which standards calibration has the best range for each analysis
   mutate(
-    .by = c("folder", "d2H_calib", "peak_id"),
-    ideal_calib = 
-      # if no calibrations have values this high, use the calibration with the highest d2H
-      if(all(d2H_vs_H2 > max_d2H_vs_H2))
-        { max_d2H_vs_H2 == max(max_d2H_vs_H2) }
-      # otherwise (i.e. if the d2H below range max for any calib)
-      # use the calibration whose max is closed to the value
-      # (i.e. use the calibration with the smallest range)
-      else 
-        { max_d2H_vs_H2 == min(max_d2H_vs_H2[d2H_vs_H2 <= max_d2H_vs_H2]) }
+    .by = c("analysis"),
+    ideal_standards =
+      # if highest peak is above the highest calibration, use the highest calib
+      if( max(d2H_vs_H2) > max(calib_max_d2H_vs_H2))
+        { standards[calib_max_d2H_vs_H2 == max(calib_max_d2H_vs_H2)][1] }
+      # otherwise use the one that includes all
+      else
+        { standards[calib_max_d2H_vs_H2 == min(calib_max_d2H_vs_H2[max(d2H_vs_H2) <= calib_max_d2H_vs_H2])][1] }
   )
 
 # safety check for number of ideal calibs (should be excactly 1 for each peak)
-n_ideal_calibs <- analytes_peak_table_w_ideal_calib |> summarize(.by = c("folder", "d2H_calib", "peak_id"), n_ideal_calibs = sum(ideal_calib))
+n_ideal_calibs <- analytes_peak_table_w_ideal_calib |> summarize(.by = c("folder", "analysis", "d2H_calib", "peak_id"), n_ideal_calibs = sum(standards == ideal_standards))
 stopifnot(
-  "each peak has to have exactly 1 ideal calibration" = all(n_ideal_calibs$n_ideal_calibs == 1L)
+  "each peak must have exactly 1 ideal calibration" = all(n_ideal_calibs$n_ideal_calibs == 1L)
 )
 
+# summarize
+analytes_peak_table_w_ideal_calib |> 
+  select(folder, analysis, ideal_standards) |> 
+  distinct() |> count(folder, ideal_standards)
+
 # final table
-analytes_peak_table_final <- 
+analytes_peak_table_final_all <- 
   analytes_peak_table_w_ideal_calib |>
   # focus on just the ideal calibs
-  filter(ideal_calib) |>
+  filter(standards == ideal_standards) |>
   # provide range info for d2H and area and simplify the memory info
   mutate(
     area_range = case_when(above_area_range ~ "above", below_area_range ~ "below", TRUE ~ "within"),
@@ -590,6 +593,23 @@ analytes_peak_table_final <-
   )
 
 # export
+analytes_peak_table_final_all |>
+  iso_strip_units() |>
+  export_to_excel(file = "data_output/samples_gcirms_data_all.xlsx")
+
+# pull out the different corrections (no mem for F8, with mem for others)
+analytes_peak_table_final <-
+  analytes_peak_table_final_all |>
+  mutate(
+    has_mem_correct = ifelse(!is.na(cal_d2H_yes_mem), TRUE, FALSE),
+    cal_d2H = ifelse(has_mem_correct, cal_d2H_yes_mem, cal_d2H_no_mem),
+    cal_d2H_se = ifelse(has_mem_correct, cal_d2H_yes_mem, cal_d2H_se_no_mem),
+    area_range = ifelse(has_mem_correct, area_range_yes_mem, area_range_no_mem),
+    d2H_range = ifelse(has_mem_correct, d2H_range_yes_mem, d2H_range_no_mem)
+  ) |>
+  select(-ends_with("_mem"))
+
+# export
 analytes_peak_table_final |>
   iso_strip_units() |>
   export_to_excel(file = "data_output/samples_gcirms_data.xlsx")
@@ -600,26 +620,18 @@ analytes_peak_table_final |>
 ```{r}
 #| label: fig-test
 analytes_peak_table_final |>
-  mutate(
-    has_mem_correct = ifelse(!is.na(cal_d2H_yes_mem), TRUE, FALSE),
-    calibration_standards = sprintf("%s (%s)", standards, has_mem_correct),
-    cal_d2H = ifelse(has_mem_correct, cal_d2H_yes_mem, cal_d2H_no_mem),
-    cal_d2H_se = ifelse(has_mem_correct, cal_d2H_yes_mem, cal_d2H_se_no_mem),
-    area_range = ifelse(has_mem_correct, area_range_yes_mem, area_range_no_mem),
-    d2H_range = ifelse(has_mem_correct, d2H_range_yes_mem, d2H_range_no_mem) |>
-      factor() |> fct_relevel("within", after = 1L)
-  ) |>
+  mutate(standards = factor(standards) |> fct_rev()) |>
   # sensible filters for what's possible
-  filter(cal_d2H >= -1000, cal_d2H <= 42000, area_range != "below") |>
+  filter(cal_d2H >= -1000, cal_d2H <= 42000) |>
   ggplot() +
   aes(
-    x = area2, y = cal_d2H, color = area_range, 
-    shape = d2H_range # sprintf("%s (%s)", standards, has_mem_correct)
+    x = area2, y = cal_d2H,
+    color = area_range, shape = d2H_range
   ) +
   geom_point() +
   scale_x_log10() +
   facet_grid(standards ~ ., scales = "free_y") +
-  labs(shape = "calibration standards\n(memory correction)")
+  theme_bw()
 ```
 
 
