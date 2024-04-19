@@ -1,0 +1,625 @@
+---
+title: "Sample Data Analysis"
+date: "`r format(Sys.Date(), '%d %b %Y')`"
+number-sections: true
+number-offset: 0
+toc: true
+toc-depth: 2
+fig-width: 10
+fig-height: 8
+df-print: tibble
+embed-resources: true
+# format specific output options
+format: 
+  # html file
+  html: 
+    code-tools: true
+    code-fold: show
+    code-summary: "Show the code"
+    toc-float: true
+# knitr global chunk options
+knitr: 
+  opts_chunk: 
+    fig.path: "plots/02_calibration_"
+    fig.keep: "all"
+    dev: ['png', 'pdf', 'postscript']
+    dev.args: 
+      pdf: 
+        encoding: 'WinAnsi'
+        useDingbats: false
+editor: source
+editor_options: 
+  chunk_output_type: console
+---
+
+# Setup (*)
+
+```{r setup, echo = TRUE, message=FALSE, warning=FALSE}
+# load libraries
+library(tidyverse)
+library(isoreader)
+library(isoprocessor)
+
+source("scripts/plotting_functions.R")
+source("scripts/table_functions.R")
+source("scripts/error_propagation.R")
+```
+
+```{r}
+message("using isoreader version ", packageVersion("isoprocessor"))
+message("using isoprocessor version ", packageVersion("isoprocessor"))
+```
+
+
+# Load Data (*)
+
+```{r}
+sample_peak_table <-
+  #readxl::read_excel("data/peak_table_raw_data.xlsx") |>
+  read_rds("cache/iso_peak_table_mapped.RDS") |>
+  # give peaks a unique id
+  mutate(
+    peak_id = row_number(),
+    type = case_when(
+      # which ones are labeled?
+      #type == "sample" & (str_detect(id1, "f0") | id1 == "t0t0x")  ~ "unlabeled sample", 
+      #type == "sample" ~ "labeled sample",
+      TRUE ~ type
+    )
+  )
+```
+
+# Analyte Peaks Overview
+
+```{r "analytes_overview", fig.width=8, fig.height=8, warning=FALSE}
+# generate overview
+sample_peak_table |>
+  filter(!is.na(compound) & compound != "H2") |>
+  iso_plot_data(
+    x = area2, y = d2H, 
+    color = type,
+    label = analysis,
+    size = 3,
+    points = TRUE
+  ) +
+  scale_color_brewer(palette = "Dark2") + 
+  scale_x_log10(breaks = c(1, 2, 3, 6, 10, 25, 50, 100, 200, 400)) +
+  theme(panel.grid.minor = element_blank()) +
+  facet_grid(type~folder, scales = "free_y") +
+   coord_cartesian(ylim = c(-150, 0))
+```
+
+
+# Memory Calculation (*)
+
+```{r}
+# calculate memory effect
+memory_effects <- 
+  sample_peak_table |>
+  # focus on analyte peaks
+  filter(!is_missing, is.na(compound) | compound != "H2") |>
+  select(file_id, peak_id, compound, rt, area2, d2H_vs_H2)
+
+memory_effects <-
+  memory_effects |>
+  # cross join all peaks
+  left_join(
+    select(memory_effects, file_id, compound_i = compound, rt_i = rt, area2_i = area2, d2H_vs_H2_i = d2H_vs_H2) |>
+      iso_strip_units(),
+    by = "file_id",
+    relationship = "many-to-many"
+  ) |>
+  # use prior peaks for memory calculation
+  group_by(file_id, peak_id, rt) |>
+  filter(rt_i <= rt) |>
+  ungroup() |>
+  # summarize for each file and peak
+  summarize(
+    .by = c("file_id", "peak_id"),
+    mem_d2H = 
+      if_else(
+        n() == 1, 0, 
+        sum(d2H_vs_H2_i[rt_i < rt] * area2_i[rt_i < rt]) / sum(area2_i[rt_i < rt]))
+  ) 
+
+if (any(is.na(memory_effects$mem_d2H))) {
+  stop("there's an issue with at least one memory calculation")
+}
+
+sample_peak_table_with_memory <-
+  sample_peak_table |>
+  left_join(memory_effects, by = c("file_id", "peak_id"))
+```
+
+# Add Standards' Isotope Data (*)
+
+```{r}
+standards <-
+  tibble(
+    standard = readxl::excel_sheets("data/GC-IRMS/standards.xlsx"),
+    data = map(standard, ~readxl::read_excel("data/GC-IRMS/standards.xlsx", sheet = .x))
+  ) |>
+  unnest(data) |>
+  filter(!is.na(true_d2H)) |>
+  select(type = standard, compound, true_d2H)
+
+standards |> iso_make_units_explicit() |> knitr::kable(digits=2)
+
+sample_peak_table_with_stds <-
+  sample_peak_table_with_memory |>
+  iso_add_standards(stds = standards, match_by = c("type", "compound"))
+```
+
+# Check individual F8 standards
+
+Applying univariate linear regression:
+
+$$
+\begin{aligned}
+\delta_{peak/H2} &= \beta_0 + \beta_1 \cdot \delta_{analyte/VSMOW}
+\end{aligned}
+$$
+
+```{r}
+F8_w_calibs <- sample_peak_table_with_stds |>
+  filter(type %in% c("F8", "FH5")) |>
+  iso_remove_problematic_peak_mappings() |>
+  iso_prepare_for_calibration(group_by = file_id) |>
+  iso_generate_calibration(
+    # simple direct calibration model
+    model = lm(d2H_vs_H2 ~ true_d2H)
+  )
+
+F8_w_calibs |> iso_get_problematic_calibrations() -> problematic.calibs
+
+F8_w_calibs <- F8_w_calibs |> iso_remove_problematic_calibrations()
+
+F8_w_calibs |>
+   iso_get_calibration_parameters(
+    select_from_coefs = c(term, estimate, SE = std.error, signif),
+    select_from_summary = c(fit_R2 = adj.r.squared, fit_RSD = sigma, residual_df = df.residual)
+    ) |>
+  arrange(term) |>
+  head() |>
+  knitr::kable(digits=4)
+```
+
+# Check derived parameters
+
+Look at the derived parameters to check consistency:
+
+$$
+\begin{aligned}
+
+\delta_{H2/VSMOW} &= -\frac{\delta_{VSMOW/H2}}{\delta_{VSMOW/H2} + 1} = 
+  \frac{ (1 - \beta_1) \cdot \delta_{mem/H2} - \beta_0}{(1 + \delta_{mem/H2} ) \cdot \beta_1} 
+  \approx \frac{-\beta_0}{\beta_1} \\
+
+\frac{A_{mem}}{A_{peak}} &= \frac{1 + \beta_0 - \beta_1}{1 + \delta_{mem/H2}} \approx 1 + \beta_0 - \beta_1 \\
+& \rightarrow A_{mem} = \overline{A_{peak}} \cdot \left(1 + \beta_0 - \beta_1 \right)
+\end{aligned}
+$$
+
+```{r "standards_parameters", fig.width=10, fig.height=8, warning=FALSE}
+calc_d2H_vs_VSMOW <- rlang::expr(-value_b0/value_b1)
+calc_percent_mem <- rlang::expr(1 + value_b0/1000 - value_b1)
+calc_A_mem <- rlang::expr(mean_area * (1 + value_b0/1000 - value_b1))
+
+stds_w_derived_params <- 
+  F8_w_calibs |>
+  iso_get_calibration_data(select = c(analysis, mean_area_identified, mean_area_identified_sd, 
+                                      injection_volume, folder, type)) |>
+  iso_get_calibration_parameters(
+    select_from_coefs = c(term, estimate, std.error),
+    select_from_summary = c()
+  ) |>
+  mutate(
+    term = case_when(term == "(Intercept)" ~ "b0", term == "true_d2H" ~ "b1"),
+    mean_area = as.numeric(mean_area_identified),
+    mean_area_sd = as.numeric(mean_area_identified_sd)
+  ) |>
+  rename(value = estimate, se = std.error) |>
+  pivot_wider(names_from = term, values_from = c(value, se)) |>
+  mutate(
+    `d2H H2/VSMOW [permil]` = !!calc_d2H_vs_VSMOW,
+    `d2H H2/VSMOW [permil] error` = propagate_error(!!calc_d2H_vs_VSMOW, dvalue_b0 = se_b0, dvalue_b1 = se_b1),
+    `Amem / Apeak` = !!calc_percent_mem,
+    `Amem / Apeak error` = propagate_error(!!calc_percent_mem, dvalue_b0 = se_b0, dvalue_b1 = se_b1),
+    `Amem [Vs]` = !!calc_A_mem,
+    `Amem [Vs] error` = propagate_error(!!calc_A_mem, dmean_area = mean_area_sd, dvalue_b0 = se_b0, dvalue_b1 = se_b1)
+  )
+
+stds_w_derived_params |>
+  pivot_longer( cols = c(`d2H H2/VSMOW [permil]`, `Amem / Apeak`, `Amem [Vs]`)) |>
+  left_join(
+    stds_w_derived_params |> 
+      pivot_longer( cols = c(`d2H H2/VSMOW [permil] error`, `Amem / Apeak error`, `Amem [Vs] error`)) |>
+      mutate(name = str_remove(name, " error")) |>
+      select(file_id, name, error = value),
+    by = c("file_id", "name")
+  ) |>
+  filter(mean_area > 1) |>
+  mutate(name = as_factor(name)) |>
+  iso_plot_data(
+    x=mean_area_identified, y=value, y_error = error, 
+    size=mean_area_identified, panel = name ~ ., 
+    shape = type,
+    points = TRUE,
+    color = folder,
+    # indicate means of d2H and Amem
+    geom_smooth(
+      data = ~filter(.x, !str_detect(name, fixed("Apeak"))),
+      method = "lm", mapping = aes(color = NULL), formula = y ~ 1,
+      color = "black", linetype = 2
+    ),
+    # indicate 1/A dependence of Amem/Apeak
+    geom_smooth(
+      data = ~filter(.x, str_detect(name, fixed("Apeak"))),
+      method = "lm", mapping = aes(color = NULL), formula = y ~ I(1/x),
+      color = "black", linetype = 2
+    )
+  ) + 
+  scale_x_log10(breaks = c(1, 2, 3, 7, 15, 30, 60)) + 
+  labs(y = NULL)
+```
+
+
+# Generate Global Galibration for circumneutral analyes (*)
+
+$$
+\begin{aligned}
+\delta_{peak/H2} 
+  &= \beta_0 + \beta_1 \cdot \delta_{analyte/VSMOW} + \beta_2 \cdot \frac{1}{A_{peak}} + \beta_3 \cdot \frac{  \delta_{analyte/VSMOW}}{A_{peak}} + \beta_4 \cdot \frac{\delta_{mem/H2}}{A_{peak}}
+\end{aligned}
+$$
+
+
+```{r}
+# analytes
+sample_peak_table_for_calibration <- 
+  sample_peak_table_with_stds |>
+  # only use identified analyte peaks
+  filter(is_identified, !is_missing, compound != "H2") |>
+  mutate(row_id = row_number()) 
+
+# global calib
+global_calib <- 
+  bind_rows(
+    # use all standards
+    sample_peak_table_for_calibration |>
+      filter(type %in% c("FH5", "FSH9", "F8", "sample")) |>
+      mutate(set = "all"),
+    # use just F8 and FH5
+    sample_peak_table_for_calibration |>
+      filter(type %in% c("FH5", "F8", "sample")) |>
+      mutate(set = "no heavy"),
+    # use just F8
+    sample_peak_table_for_calibration |>
+      filter(type %in% c("F8", "sample")) |>
+      mutate(set = "F8 only")
+  ) |>
+  mutate(
+    .by =c("set", "folder"),
+    standards = type |> unique() |> str_subset("sample", negate = TRUE) |> paste(collapse = ","),
+    # filter by area2 for min cutoff
+    use_in_calib = type != "sample" & is_std_peak & area2 > iso_double_with_units(3, "Vs")
+  ) |>
+  # prepare calibration
+  iso_prepare_for_calibration(group_by = c(set, folder, standards)) |>
+  filter(!duplicated(paste(folder, standards))) |>
+  iso_generate_calibration(
+    calibration = "d2H",
+    model=c(
+      b0_b1_only = lm(d2H_vs_H2 ~ true_d2H),
+      plus_area_b2_b3 = lm(d2H_vs_H2 ~ true_d2H + I(1/area2) + true_d2H : I(1/area2)),
+      plus_area_b2_b3_mem = lm(d2H_vs_H2 ~ true_d2H + I(1/area2) + true_d2H : I(1/area2) + mem_d2H : I(1/area2)),
+      plus_mem = lm(d2H_vs_H2 ~ true_d2H + mem_d2H : I(1/area2))
+    ),
+    use_in_calib = use_in_calib
+  ) |>
+  iso_remove_problematic_calibrations()
+```
+
+# Global Calibration Parameters
+
+```{r "global_calib_parameters", fig.width=8, fig.height=12}
+global_calib |>
+  iso_get_calibration_parameters(
+    select_from_coefs = c(),
+    select_from_summary = 
+      c(fit_R2=adj.r.squared, fit_RSD=sigma, residual_df=df.residual)
+  ) |>
+  knitr::kable(digits=4)
+
+global_calib |> iso_plot_calibration_parameters(shape = paste(folder, standards)) 
+```
+
+# Check derived parameters
+
+$$
+\begin{aligned}
+\delta_{H2/VSMOW} &= -\frac{\delta_{VSMOW/H2}}{\delta_{VSMOW/H2} + 1} = \frac{-\beta_0}{\beta_0 + 1} =  \frac{1-\beta_1}{\beta_1} = -\frac{\beta_2}{\beta_2 - \beta_4} = -\frac{\beta_3 + \beta_4}{\beta_3} \\
+A_{mem} &= \beta_4 = -\frac{\beta_2}{\beta_0} = - \frac{\beta_3}{\beta_1} = \beta_2 - \beta_3
+\end{aligned}
+$$
+
+```{r}
+calc_d2H_b0 <- rlang::expr(-val_b0 / (val_b0/1000 + 1))
+calc_d2H_b1 <- rlang::expr(1000 * (1 - val_b1) / val_b1)
+calc_d2H_b2_b4 <- rlang::expr(-val_b2 / (val_b2/1000 - val_b4))
+calc_d2H_b3_b4 <- rlang::expr(- 1000 * (val_b3 + val_b4) / val_b3)
+calc_Amem_b0_b2 <- rlang::expr(-val_b2 / val_b0)
+calc_Amem_b1_b3 <- rlang::expr(-val_b3 / val_b1)
+calc_Amem_b2_b3 <- rlang::expr(val_b2/1000 - val_b3)
+
+calib_params <- 
+  global_calib |>
+  iso_get_calibration_parameters(
+    select_from_coefs = c(term, val = estimate, se = std.error),
+    select_from_summary = c()
+  ) |>
+  mutate(
+    term = as_factor(term) |>
+      fct_recode(
+        b0 = "(Intercept)", b1 = "true_d2H",
+        b2 = "I(1/area2)", b3 = "true_d2H:I(1/area2)", 
+        b4 = "I(1/area2):mem_d2H"
+      )
+  ) |> 
+  pivot_wider(values_from = c(val, se), names_from = term) |>
+  mutate(
+    val_dH2_b0 = !!calc_d2H_b0,
+    se_dH2_b0 = propagate_error(!!calc_d2H_b0, dval_b0 = se_b0),
+    val_dH2_b1 = !! calc_d2H_b1,
+    se_dH2_b1 = propagate_error(!!calc_d2H_b1, dval_b1 = se_b1),
+    val_dH2_b2_b4 = !!calc_d2H_b2_b4,
+    se_dH2_b2_b4 = propagate_error(!!calc_d2H_b2_b4, dval_b2 = se_b2, dval_b4 = se_b4),
+    val_dH2_b3_b4 = !!calc_d2H_b3_b4,
+    se_dH2_b3_b4 = propagate_error(!!calc_d2H_b3_b4, dval_b3 = se_b3, dval_b4 = se_b4),
+    val_Amem_b4 = val_b4,
+    se_Amem_b4 = se_b4,
+    val_Amem_b0_b2 = !!calc_Amem_b0_b2,
+    se_Amem_b0_b2 = propagate_error(!!calc_Amem_b0_b2, dval_b2 = se_b2, dval_b0 = se_b0),
+    val_Amem_b1_b3 = !!calc_Amem_b1_b3,
+    se_Amem_b1_b3 = propagate_error(!!calc_Amem_b1_b3, dval_b3 = se_b3, dval_b1 = se_b1),
+    val_Amem_b2_b3 = !!calc_Amem_b2_b3,
+    se_Amem_b2_b3 = propagate_error(!!calc_Amem_b2_b3, dval_b3 = se_b3, dval_b2 = se_b2)
+  )
+
+calib_params_table <- 
+  left_join(
+  calib_params |>
+    select(folder, standards, d2H_calib, starts_with("val")) |>
+    pivot_longer(cols = -c(folder, standards, d2H_calib), names_to = "var", 
+                 names_transform = ~str_remove(.x, "val_")),
+  calib_params |>
+    select(folder, standards, d2H_calib, starts_with("se_")) |>
+    pivot_longer(cols = -c(folder, standards, d2H_calib), names_to = "var", values_to = "se", 
+                 names_transform = ~str_remove(.x, "se_")),
+  by = c("folder", "standards", "d2H_calib", "var")
+) |>
+  mutate(
+    formatted = format_with_decimals(value, error = se, decimals = find_signif_decimals(se, 1), include_plus = FALSE)
+  ) |>
+  pivot_wider(id_cols = c(folder, standards, var), names_from = d2H_calib, values_from = formatted)
+
+# results
+calib_params_table |> knitr::kable()
+
+```
+
+# Residuals
+
+```{r "residuals_natural", fig.width=9, fig.height=6, warning=FALSE}
+global_calib |>
+  #filter(str_detect(folder, "2023-11")) |>
+  # plot residuals
+  mutate(calib = str_extract(folder, "2023-\\d+") |> paste(standards)) |>
+  iso_plot_residuals(
+    x = area2, # vs. area
+    points = TRUE, size = 2, alpha = 0.5, color = compound,
+    shape = type,
+    # residual smoothing fit
+    trendlines = FALSE,
+    smooth = geom_smooth(
+      mapping = aes(color = NULL, shape = NULL), method = "loess", formula = y ~ x
+    ),
+    value_ranges = FALSE
+  ) +
+  # put on log x scale
+  scale_x_log10() +
+  theme(legend.position = "right") +
+  facet_grid(calib ~ d2H_calib, scales = "free_y")
+```
+
+# Apply Global Calibrations (*)
+
+```{r, warning=FALSE, cache=TRUE}
+# applying model (also include without memory to figure out how much of a difference it makes)
+global_calibs_applied <-
+  global_calib |>
+  filter(
+    d2H_calib %in% c("plus_area_b2_b3", "plus_area_b2_b3_mem")
+  ) |>
+  iso_apply_calibration(
+    predict = true_d2H,
+    #calculate_error = TRUE
+    calculate_error = FALSE
+  )
+
+# ranges
+global_calibs_w_ranges <-
+  global_calibs_applied |>
+  iso_evaluate_calibration_range(area2, true_d2H_pred, d2H_vs_H2)
+
+global_calibs_w_ranges |>
+  iso_get_calibration_range() |>
+  knitr::kable(d=2)
+```
+
+# Calibrated Data Table (*)
+
+```{r}
+# calibrated table - combine all the information
+peak_table_calibrated_w_flags <- global_calibs_w_ranges |>
+  iso_get_calibration_data() |>
+  filter(!is.na(true_d2H_pred)) |>
+  mutate(
+    below_area_range = str_detect(d2H_in_range, fixed("<'area2'")),
+    above_area_range = str_detect(d2H_in_range, fixed(">'area2'")),
+    below_d2H_range = str_detect(d2H_in_range, "<'true_d2H"),
+    above_d2H_range = str_detect(d2H_in_range, ">'true_d2H"),
+  ) |> 
+  select(-d2H_calib_params)
+
+peak_table_calibrated <- 
+  peak_table_calibrated_w_flags |>
+   rename(
+     calibrated_d2H = true_d2H_pred,
+     calibrated_d2H_se = true_d2H_pred_se
+   )
+```
+
+# Calibration Standards
+
+```{r}
+calibration_std_peak_table <-
+  peak_table_calibrated |>
+  filter(d2H_in_calib )
+
+# residuals + errors of the inverted calibration
+deg_freedom_calib <- global_calib |>
+  iso_get_calibration_summary() |> 
+  select("folder", "standards", "d2H_calib", "deg_freedom" = "df.residual")
+
+# over all rmse
+calibration_std_peak_table |>
+  left_join(deg_freedom_calib, by = c("folder", "standards", "d2H_calib")) |>
+  summarize(
+    .by = c("folder", "standards", "d2H_calib"),
+    n = n(), 
+    RSD = sqrt(sum((calibrated_d2H - true_d2H)^2, na.rm = TRUE) /
+                 (deg_freedom[1])) |> round(2),
+    RMSE = sqrt(mean((calibrated_d2H - true_d2H)^2, na.rm = TRUE)) |> round(2)
+  ) |>
+  knitr::kable()
+```
+
+# Extraction Standards - FIXME after mapping 21:0 and 23:0
+
+```{r}
+# extraction_std_peak_table <- 
+#   peak_table_calibrated |>
+#   filter(compound %in% c("21:0 (STD)", "23:0 (STD)"), !below_area_range)
+# 
+# extraction_std_peak_table |>
+#   filter(!below_area_range, !above_area_range) |>
+#   iso_plot_data(
+#     x = area2, y = c(calibrated_d2H_without_memory, calibrated_d2H_with_memory_correction), 
+#     color = compound,
+#     points = TRUE
+#   ) +
+#   scale_x_log10()
+# 
+# extraction_std_peak_table |>
+#   filter(!below_area_range, !above_area_range) |>
+#   group_by(compound) |>
+#   summarize(
+#     .by = c("folder", "standards", "compound"),
+#     calibrated_d2H_without_memory_sd = sd(calibrated_d2H_without_memory),
+#     calibrated_d2H_with_memory_correction_sd = sd(calibrated_d2H_with_memory_correction)
+#   )
+```
+
+# Sample Analytes (*)
+
+```{r}
+# get ideal calibrations info
+analytes_peak_table_w_ideal_calib <- 
+  peak_table_calibrated |>
+  # focus on samples only
+  filter(type == "sample") |>
+  # bring in calibration max info
+  left_join(
+    global_calibs_w_ranges |> iso_get_calibration_range() |> 
+      filter(term == "d2H_vs_H2") |> 
+      select("folder", "standards", "d2H_calib", "max_d2H_vs_H2" = "max"),
+    by = c("folder", "standards", "d2H_calib")
+  ) |>
+  # decide which calibration has the ideal range for each analysis
+  mutate(
+    .by = c("folder", "d2H_calib", "peak_id"),
+    ideal_calib = 
+      # if no calibrations have values this high, use the calibration with the highest d2H
+      if(all(d2H_vs_H2 > max_d2H_vs_H2))
+        { max_d2H_vs_H2 == max(max_d2H_vs_H2) }
+      # otherwise (i.e. if the d2H below range max for any calib)
+      # use the calibration whose max is closed to the value
+      # (i.e. use the calibration with the smallest range)
+      else 
+        { max_d2H_vs_H2 == min(max_d2H_vs_H2[d2H_vs_H2 <= max_d2H_vs_H2]) }
+  )
+
+# safety check for number of ideal calibs (should be excactly 1 for each peak)
+n_ideal_calibs <- analytes_peak_table_w_ideal_calib |> summarize(.by = c("folder", "d2H_calib", "peak_id"), n_ideal_calibs = sum(ideal_calib))
+stopifnot(
+  "each peak has to have exactly 1 ideal calibration" = all(n_ideal_calibs$n_ideal_calibs == 1L)
+)
+
+# final table
+analytes_peak_table_final <- 
+  analytes_peak_table_w_ideal_calib |>
+  # focus on just the ideal calibs
+  filter(ideal_calib) |>
+  # provide range info for d2H and area and simplify the memory info
+  mutate(
+    area_range = case_when(above_area_range ~ "above", below_area_range ~ "below", TRUE ~ "within"),
+    d2H_range = case_when(above_d2H_range ~ "above", below_d2H_range ~ "below", TRUE ~ "within"),
+    memory = ifelse(str_detect(d2H_calib, "mem"), "yes_mem", "no_mem")
+  ) |>
+  select(
+    "folder", "analysis", "sample_id", "compound", "rep", "rt_start":"mem_d2H",
+    "standards", "memory", "area_range", "d2H_range", "cal_d2H" = "calibrated_d2H", "cal_d2H_se" = "calibrated_d2H_se"
+  ) |>
+  # focus on memory value only for calibrations that need it (i.e. have more than F8 in them)
+  filter( (standards == "F8" & memory == "no_mem") | standards != "F8") |>
+  # pivot to wider
+  pivot_wider(
+    names_from = memory,
+    values_from = c(area_range, d2H_range, cal_d2H, cal_d2H_se)
+  )
+
+# export
+analytes_peak_table_final |>
+  iso_strip_units() |>
+  export_to_excel(file = "data_output/samples_gcirms_data.xlsx")
+```
+
+# Test Visualization
+
+```{r}
+#| label: fig-test
+analytes_peak_table_final |>
+  mutate(
+    has_mem_correct = ifelse(!is.na(cal_d2H_yes_mem), TRUE, FALSE),
+    calibration_standards = sprintf("%s (%s)", standards, has_mem_correct),
+    cal_d2H = ifelse(has_mem_correct, cal_d2H_yes_mem, cal_d2H_no_mem),
+    cal_d2H_se = ifelse(has_mem_correct, cal_d2H_yes_mem, cal_d2H_se_no_mem),
+    area_range = ifelse(has_mem_correct, area_range_yes_mem, area_range_no_mem),
+    d2H_range = ifelse(has_mem_correct, d2H_range_yes_mem, d2H_range_no_mem) |>
+      factor() |> fct_relevel("within", after = 1L)
+  ) |>
+  # sensible filters for what's possible
+  filter(cal_d2H >= -1000, cal_d2H <= 42000, area_range != "below") |>
+  ggplot() +
+  aes(
+    x = area2, y = cal_d2H, color = area_range, 
+    shape = d2H_range # sprintf("%s (%s)", standards, has_mem_correct)
+  ) +
+  geom_point() +
+  scale_x_log10() +
+  facet_grid(standards ~ ., scales = "free_y") +
+  labs(shape = "calibration standards\n(memory correction)")
+```
+
+
