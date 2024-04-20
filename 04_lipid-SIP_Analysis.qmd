@@ -10,8 +10,6 @@ editor_options:
 
 This script is for calculation of lipid-SIP parameters that allow for quantification of biomass growth rate/turnover/generation time etc. We pair metadata with the outputs of our IRMS calibration.
 
-> **NOTE: This version of the script uses non-calibrated IRMS data. I need to go back and calibrate the data for H2/Linearity/memory-effects, then re-run this analysis. The data generated here are preliminary!**
-
 # Setup
 
 Load libraries and sourced functions
@@ -32,31 +30,35 @@ R2H_VSMOW <- ref_ratio |> as.numeric()
 F2H_VSMOW <- ref_frac |> as.numeric()
 ```
 
-Load data (see earlier note)
-
-> NOTE: CURRENTLY BROKEN AS WE CALIBRATE IRMS DATA FOR MEMORY
+Read in various sources of data
 
 ```{r}
-
 # read in label dD data
 label_dD <- read_rds("cache/label_dD.rds") |> select(-dD_SMOW, -at2H_label)
 
-# read in JCR data
+# read in JCR data 
 JCR_metadata <- readxl::read_excel("data/JCR-metadata-Feb-2023.xlsx")|> 
   rename(F2H_label_JCR = `Effective F2H`)
 
-# read in permafrost data
-sample_peak_table <- read_rds("cache/iso_peak_table_mapped.rds") |> view()
-  rename(analysis = Analysis) |> 
-  filter(type == "sample") |> # remove F8s, FH5s, FSH9s
-  filter(compound != "H2") |> # remove ref gas peaks
-  filter(!is.na(compound)) |> # remove unassigned compounds
+# read in calibrated permafrost peak table
+irms_calibrated <- readxl::read_excel("data_output/samples_gcirms_data.xlsx") |> 
   mutate(
-    # cleanup the sample_id string
-    sample_id = str_extract(sample_id, ".*d-"),
-    sample_id = str_sub(sample_id, start = 1, end = -2)
+    # parse which fraction the sample is from
+    # (need to do this before cleaning sample id!)
+    fraction = case_when(
+      str_detect(sample_id, "F2") ~ "F2", # F2 = glycolipid
+      str_detect(sample_id, "F3") ~ "F3"  # F3 = phospholipid
+    ),
+    # clean up the sample_id column
+    sample_id = 
+      case_when(
+        str_detect(sample_id, "HDK") ~ sample_id,
+        !str_detect(sample_id, "HDK") ~ 
+                      str_extract(sample_id, ".*d-") |> 
+                      str_sub(start = 1, end = -2)
+      )
   ) |> 
-  # add in some basic metadata:
+  # parse metadata based on sample_id string
   mutate(
     site = case_when(
       str_detect(sample_id, "p35") ~ "35m",
@@ -69,16 +71,12 @@ sample_peak_table <- read_rds("cache/iso_peak_table_mapped.rds") |> view()
       str_detect(sample_id, "(4C)") ~ 4,
       str_detect(sample_id, "(12C)") ~ 12
     ),
-    fraction = case_when(
-      str_detect(file_id, "F2") ~ "glyco-IPL",
-      str_detect(file_id, "F3") ~ "phospho-IPL"
-    ),
     experiment = case_when(
-      str_detect(file_id, "HDK23") ~ "JCR",
+      str_detect(sample_id, "HDK23") ~ "JCR",
       TRUE ~ "Fox, AK"
     ),
     JCR_id = case_when(
-      experiment == "JCR" ~ str_extract(file_id, "HDK23-(\\d{3})"),
+      experiment == "JCR" ~ str_extract(sample_id, "HDK23-(\\d{3})"),
       TRUE ~ NA
     ),
       inc_time_d = case_when(
@@ -91,18 +89,17 @@ sample_peak_table <- read_rds("cache/iso_peak_table_mapped.rds") |> view()
     # parse number of C in the FAME
     n_C = abs(parse_number(compound))
   ) |> 
-  left_join(JCR_metadata, by = "JCR_id") |>
-  isoreader::iso_make_units_implicit() |> 
-  # calculate fractional abundance of deuterium
-  mutate(F2H = d2H_to_F2H(as.numeric(d2H))) |> 
-  select(file_id, sample_id, analysis, site, inc_time_d, inc_temp_C, everything())
+  select(sample_id, site, inc_temp_C, experiment, JCR_id, everything()) |> 
+  # This script focuses on Fox Permafrost tunnel.
+  filter(experiment == "Fox, AK")
 ```
 
 Inspect the data we have
 
 ```{r}
-sample_peak_table |> 
+irms_calibrated |> 
   select(sample_id, site, inc_time_d, inc_temp_C, fraction) |> 
+  arrange(fraction, site, inc_temp_C, inc_time_d) |> 
   unique() |> 
   gt::gt() |> 
   gt::data_color(columns = inc_temp_C, palette = "Reds") |> 
@@ -115,7 +112,175 @@ Load GC-FID data (see `01_GC-FID_Prep.qmd` for generation/analysis).
 
 ```{r}
 FID_data <- read_rds("cache/FID_absolute_quant.RDS") |> 
-  mutate(site = case_when(core == "US" ~ "Surface", TRUE ~ core))
+  mutate(site = case_when(core == "US" ~ "Surface", TRUE ~ core)) |> 
+  rename(inc_temp_C = temp, compound = `Peak Name`) |> 
+  select(sample_id, compound, fraction, site, inc_temp_C, inc_time_d, abs_mass_analyte_total_ng_per_g)
+```
+
+# Inspect the data
+
+```{r}
+irms_calibrated |> 
+  filter(fraction == "F3") |> 
+  filter(area2 >= 2) |> 
+  filter(inc_time_d < 180) |> 
+  ggplot() +
+  aes(
+    x = inc_time_d,
+    y = cal_d2H,
+    color = compound
+  ) +
+  geom_point() +
+  geom_line() +
+  scale_color_viridis_d() +
+  facet_wrap(vars(site, inc_temp_C), scales = "free_y") +
+  labs(
+    title = "Area cutoff = 2Vs, Fraction = Phospho (F3)"
+  ) +
+  theme_bw() +
+  theme()
+```
+
+# Join with abundance data and filter
+
+Let's generate abundance-weighted means of the data to see how the community d2H increases over time. We can then use these to calculate assemblage-level biomass turnover rates.
+
+We'll apply an area filter of \> 2Vs.
+
+```{r}
+irms_w_FID <- irms_calibrated |> 
+  left_join(FID_data, by = c("sample_id", "site", "inc_temp_C", "inc_time_d", "compound", "fraction")) |> 
+  # pare down the data
+  select(-c(folder, rep, rt_start, rt_end, amp2, amp3, area3, bgrd2_end, 
+            bgrd3_start,  bgrd3_end, `r3/2`, `rd3/2`, `d3/2`, n_overlapping, 
+            n_matches, ref_ratio_at_rt, rel_area, mean_amp_identified,
+            ref_peak_outliers)) |> 
+  # apply area filter
+  filter(area2 >= 2)
+```
+
+Inspect the data
+
+```{r}
+irms_w_FID |>
+  ggplot() +
+  aes(
+    x = cal_d2H,
+    y = abs_mass_analyte_total_ng_per_g, label = paste(sample_id, compound),
+    color = as.factor(inc_time_d),
+    shape = site
+  ) +
+  geom_point() +
+  theme_bw()
+```
+
+# Visualize differences between memory corrected data and non-corrected data
+
+```{r}
+irms_cal_all <- readxl::read_excel("data_output/samples_gcirms_data_all.xlsx") |> 
+  mutate(
+    # parse which fraction the sample is from
+    # (need to do this before cleaning sample id!)
+    fraction = case_when(
+      str_detect(sample_id, "F2") ~ "F2", # F2 = glycolipid
+      str_detect(sample_id, "F3") ~ "F3"  # F3 = phospholipid
+    ),
+    # clean up the sample_id column
+    sample_id = 
+      case_when(
+        str_detect(sample_id, "HDK") ~ sample_id,
+        !str_detect(sample_id, "HDK") ~ 
+                      str_extract(sample_id, ".*d-") |> 
+                      str_sub(start = 1, end = -2)
+      )
+  ) |> 
+  # parse metadata based on sample_id string
+  mutate(
+    site = case_when(
+      str_detect(sample_id, "p35") ~ "35m",
+      str_detect(sample_id, "p54") ~ "54m",
+      str_detect(sample_id, "p83") ~ "83m",
+      str_detect(sample_id, "pUS") ~ "Surface"
+    ),
+    inc_temp_C = case_when(
+      str_detect(sample_id, "(-4C)") ~ -4,
+      str_detect(sample_id, "(4C)") ~ 4,
+      str_detect(sample_id, "(12C)") ~ 12
+    ),
+    experiment = case_when(
+      str_detect(sample_id, "HDK23") ~ "JCR",
+      TRUE ~ "Fox, AK"
+    ),
+    JCR_id = case_when(
+      experiment == "JCR" ~ str_extract(sample_id, "HDK23-(\\d{3})"),
+      TRUE ~ NA
+    ),
+      inc_time_d = case_when(
+        str_detect(sample_id, "30d") ~ 30,
+        str_detect(sample_id, "180d") ~ 180,
+        str_detect(sample_id, "0d") ~ 0,
+        str_detect(sample_id, "7d") ~ 7,
+        experiment == "JCR" ~ 7.07 # all JCR samples ran for 7 days and change
+    ),
+    # parse number of C in the FAME
+    n_C = abs(parse_number(compound))
+  ) |> 
+  select(sample_id, site, inc_temp_C, experiment, JCR_id, everything()) |> 
+  # This script focuses on Fox Permafrost tunnel.
+  filter(experiment == "Fox, AK")
+
+irms_cal_all |> 
+  filter(area2 >= 2 & area2 < 20) |> 
+  filter(!is.na(cal_d2H_yes_mem)) |> 
+  mutate(diff_mem_nomem = cal_d2H_no_mem - cal_d2H_yes_mem) |> 
+  ggplot(
+    aes(
+      y = diff_mem_nomem,
+      x = area2,
+      color = as.factor(inc_time_d)
+    )
+  ) +
+  geom_point() +
+  labs(
+    y = "d2H no correction - d2H memory corrected"
+  ) +
+  theme_bw()
+```
+
+# Calculate abundance-weighted mean
+
+We can aggregate our growth rate measurements into assemblage-level estimates of microbial community growth by calculating an abundance-weighted mean $(\bar{x})$:
+
+$$
+\bar{x} = \frac{ \sum_{i = 1}^{N} x_iw_i}{ \sum_{i = 1}^{N} w_i }
+$$
+
+Where $x_i$ is the isotopic composition of a compound $i$ and $w_i$ is the relative abundance (weighting) of compound $i$. Here, our weight (w) is the compound abundance determined by GC-FID: `abs_mass_analyte_total_ng_per_g` and our data (x) is the calibrated d2H.
+
+```{r}
+irms_w_FID_wm <- irms_w_FID |> 
+  group_by(fraction, site, inc_temp_C, inc_time_d) |> 
+  dplyr::summarise(
+    cal_d2H_wm = 
+      sum(cal_d2H * abs_mass_analyte_total_ng_per_g, na.rm = TRUE) /
+      sum(abs_mass_analyte_total_ng_per_g, na.rm = TRUE),
+    .groups = "keep"
+  )
+
+
+# visualize the weighted mean data
+irms_w_FID_wm |> 
+  filter(inc_time_d < 180) |> 
+  filter(fraction != "F2") |> 
+  filter(site != "Surface") |> 
+  ggplot() +
+  aes(
+    x = inc_time_d,
+    y = cal_d2H_wm
+  ) +
+  geom_point() +
+  geom_line() +
+  facet_wrap(vars(site, inc_temp_C))
 ```
 
 # Calculate growth rate
