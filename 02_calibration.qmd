@@ -9,7 +9,6 @@ fig-width: 10
 fig-height: 8
 df-print: tibble
 embed-resources: true
-# format specific output options
 format: 
   # html file
   html: 
@@ -17,7 +16,6 @@ format:
     code-fold: show
     code-summary: "Show the code"
     toc-float: true
-# knitr global chunk options
 knitr: 
   opts_chunk: 
     fig.path: "plots/02_calibration_"
@@ -33,6 +31,8 @@ editor_options:
 ---
 
 # Setup (*)
+
+Load in required libraries and homemade functions
 
 ```{r setup, echo = TRUE, message=FALSE, warning=FALSE}
 # load libraries
@@ -52,6 +52,8 @@ message("using isoprocessor version ", packageVersion("isoprocessor"))
 
 
 # Load Data (*)
+
+Load in the peak table. This is the full list of peaks mapped to specific compound identities.
 
 ```{r}
 sample_peak_table <-
@@ -96,7 +98,7 @@ sample_peak_table |>
 # calculate memory effect
 memory_effects <- 
   sample_peak_table |>
-  # focus on analyte peaks
+  # focus on analyte peaks, exclude missing or H2 ref gas pulses
   filter(!is_missing, is.na(compound) | compound != "H2") |>
   select(file_id, peak_id, compound, rt, area2, d2H_vs_H2)
 
@@ -119,19 +121,24 @@ memory_effects <-
     mem_d2H = 
       if_else(
         n() == 1, 0, 
+        # weight the mem contribution of peaks prior to peak_i by their area
         sum(d2H_vs_H2_i[rt_i < rt] * area2_i[rt_i < rt]) / sum(area2_i[rt_i < rt]))
   ) 
 
 if (any(is.na(memory_effects$mem_d2H))) {
-  stop("there's an issue with at least one memory calculation")
+  stop("There's an issue with at least one memory calculation")
+} else {
+  message("Memory effects calculated.")
 }
 
+# create a peak table of sample compounds with memory effect (mem_d2H)
 sample_peak_table_with_memory <-
   sample_peak_table |>
   left_join(memory_effects, by = c("file_id", "peak_id"))
 ```
 
 # Add Standards' Isotope Data (*)
+These standards are F8 (natural abundance standards), FH5 (heavy standards), FSH9 (super heavy standards)
 
 ```{r}
 standards <-
@@ -505,7 +512,10 @@ calibration_std_peak_table |>
   knitr::kable()
 ```
 
-# Extraction Standards - FIXME after mapping 21:0 and 23:0
+# Extraction Standards
+
+No extraction standards are visible in our IRMS runs (yes in FID runs) because we intentionally opened the split after C20.
+This was because the extraction standards  were extremely concentrated relative to the analytes.
 
 ```{r}
 # extraction_std_peak_table <- 
