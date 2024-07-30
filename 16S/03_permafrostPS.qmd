@@ -291,10 +291,20 @@ cowplot::save_plot(
 
 # Calculate biomass-normalized abundance
 
-This is an estimation of taxonomic absolute abundance which multiplies relative abundance by the total amount of intact biomass in the sample, as a first order approximation
+This is an estimation of taxonomic absolute abundance which multiplies relative abundance by the total amount of intact biomass in the sample, as a first order approximation.
+
+$$
+x\: pg PLFA \times \frac{1 \: cell}{0.003503333 \: pg \: PLFA} = y \: cells
+$$
 
 ```{r}
-PLFA_data
+# PLFA to cell conversion factor: 0.003503333 pg PLFA per cell
+# See Frostegaard and Baath reference
+PLFA_data <- PLFA_data |> 
+  mutate(
+    total_PLFA_pg_per_g = total_PLFA_ng_per_g * 1000, # 1000 pg / ng
+    cells_per_g = total_PLFA_pg_per_g * (1/0.003503333)  # x PLFA * (cell/PLFA) = ycell
+  )
 
 
 ps.samples.PLFA_melted <- ps.samples |> 
@@ -309,6 +319,7 @@ ps.samples.PLFA_melted <- ps.samples |>
 ```
 
 ```{r}
+# Create dataset of relative abundance scaled by PLFA
 ps.samples.PLFA <- ps.samples |> 
   ps_join(PLFA_data, by = c("depth", "incubation_temp_C", "inc_time_d")) |> 
   # transform to relative abundance
@@ -318,7 +329,17 @@ for(n in 1:nsamples(ps.samples.PLFA)) {
   otu_table(ps.samples.PLFA)[,n] <- otu_table(ps.samples.PLFA)[,n]*sample_data(ps.samples.PLFA)$total_PLFA_ng_per_g [n]
 }
 
+# Create dataset of relative abundance scaled by estimated cell density
+ps.samples.cells <- ps.samples |> 
+  ps_join(PLFA_data, by = c("depth", "incubation_temp_C", "inc_time_d")) |> 
+  # transform to relative abundance
+  transform_sample_counts(function(x){x/sum(x)})
 
+for(n in 1:nsamples(ps.samples.cells)) {
+  otu_table(ps.samples.cells)[,n] <- otu_table(ps.samples.cells)[,n]*sample_data(ps.samples.cells)$cells_per_g [n]
+}
+
+# Plot PLFA weighted abundance
 p_ps.samples_PLFA <- ps.samples.PLFA |> 
   ps_mutate(
     inc_time_d_fct = factor(
@@ -333,7 +354,8 @@ p_ps.samples_PLFA <- ps.samples.PLFA |>
   coord_flip() +
   facet_grid(vars(depth, incubation_temp_C), scales = "free_x") +
   labs(x = "Incubation time (days)",
-       y = "PLFA-Scaled Abundance (ng biomass/g)") +
+       y = latex2exp::TeX("Biomass-Weighted Abundance (RA \\times ng/g)")
+       ) +
   theme(
     legend.position = "left"
   ) +
@@ -372,8 +394,8 @@ p_PLFA
 
 ```{r}
 p_combined_PLFA <- cowplot::plot_grid(
-  p_barplot, p_PLFA, p_alpha2,
-  nrow = 1, rel_widths = c(0.74, 0.13, 0.13)
+  p_ps.samples_PLFA, p_alpha2,
+  nrow = 1, rel_widths = c(0.85, 0.15)
 )
 p_combined_PLFA
 
