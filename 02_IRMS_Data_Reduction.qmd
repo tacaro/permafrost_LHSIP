@@ -155,7 +155,7 @@ iso_files |> iso_get_file_info() |> count(type) |> arrange(desc(n))
 ```{r}
 iso_files |>  
   # choosing arbitrary file to plot
-  iso_filter_files(Analysis == "BF16202") |>
+  iso_filter_files(Analysis == "BF16739") |>
   iso_plot_continuous_flow_data(
     # select data and aesthetics
     data = c(2), color = sample_id, panel = NULL,
@@ -166,8 +166,29 @@ iso_files |>
     peak_marker = FALSE,
     peak_label = iso_format(rt),
     #peak_label_size = 3,
-    peak_label_filter = amp2 > 1
-  ) + theme_classic() 
+    peak_label_filter = amp2 > 1,
+  ) + theme_classic()
+
+example_data <- iso_files |> 
+  iso_filter_files(Analysis == "BF16739") |>
+  iso_get_raw_data()
+
+p_example_chroma <- example_data |> 
+  filter(time.s > 600 & time.s < 1200) |> 
+  ggplot(
+    aes(x = time.s, y = v2.mV, color = v2.mV)
+  ) +
+  geom_line(linewidth = 0.7, color = "#00bbff") +
+  theme_classic() +
+  theme(legend.position = "None",
+        axis.line = element_blank(), 
+        axis.ticks = element_blank(),
+        axis.text = element_blank(),
+        axis.title = element_blank())
+
+cowplot::save_plot(plot = p_example_chroma, 
+                   filename = "fig_output/example_chromatogram.pdf",
+                   base_height = 4, base_width = 4)
 ```
 
 ## Inspect the file info
