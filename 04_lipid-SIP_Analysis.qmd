@@ -18,6 +18,9 @@ Load libraries and sourced functions
 rm(list=ls()) # Clear the environment
 library(tidyverse) # CRAN v2.0.0
 library(isotopia)
+library(gt)
+library(patchwork)
+library(ggbreak)
 source("source/calculate_turnover.R") # calculate growth rates
 source("source/d2H_to_F2H.R") # convert delta notation to F2H
 source("source/error_prop.R") # propagate error in growth rates
@@ -35,10 +38,6 @@ Read in various sources of data
 ```{r}
 # read in label dD data
 label_dD <- read_rds("cache/label_dD.rds") |> select(-dD_SMOW, -at2H_label)
-
-# read in JCR data 
-JCR_metadata <- readxl::read_excel("data/JCR-metadata-Feb-2023.xlsx")|> 
-  rename(F2H_label_JCR = `Effective F2H`)
 
 # read in calibrated permafrost peak table
 irms_calibrated <- readxl::read_excel("data_output/samples_gcirms_data.xlsx") |> 
@@ -89,92 +88,12 @@ irms_calibrated <- readxl::read_excel("data_output/samples_gcirms_data.xlsx") |>
     # parse number of C in the FAME
     n_C = abs(parse_number(compound))
   ) |> 
-  select(sample_id, site, inc_temp_C, experiment, JCR_id, everything()) |> 
+  select(sample_id, site, inc_temp_C, inc_time_d, experiment, everything()) |> 
   # This script focuses on Fox Permafrost tunnel.
   filter(experiment == "Fox, AK")
 ```
 
-Inspect the data we have
-
-```{r}
-irms_calibrated |> 
-  select(sample_id, site, inc_time_d, inc_temp_C, fraction) |> 
-  arrange(fraction, site, inc_temp_C, inc_time_d) |> 
-  unique() |> 
-  gt::gt() |> 
-  gt::data_color(columns = inc_temp_C, palette = "Reds") |> 
-  gt::data_color(columns = inc_time_d, palette = "Blues") |> 
-  gt::data_color(columns = fraction, palette = "Greens") |> 
-  gt::data_color(columns = site, palette = "Set1")
-```
-
-Load GC-FID data (see `01_GC-FID_Prep.qmd` for generation/analysis).
-
-```{r}
-FID_data <- read_rds("cache/FID_absolute_quant.RDS") |> 
-  mutate(site = case_when(core == "US" ~ "Surface", TRUE ~ core)) |> 
-  rename(inc_temp_C = temp, compound = `Peak Name`) |> 
-  select(sample_id, compound, fraction, site, inc_temp_C, inc_time_d, abs_mass_analyte_total_ng_per_g)
-```
-
-# Inspect the data
-
-```{r}
-irms_calibrated |> 
-  filter(fraction == "F3") |> 
-  filter(area2 >= 2) |> 
-  filter(inc_time_d < 180) |> 
-  ggplot() +
-  aes(
-    x = inc_time_d,
-    y = cal_d2H,
-    color = compound
-  ) +
-  geom_point() +
-  geom_line() +
-  scale_color_viridis_d() +
-  facet_wrap(vars(site, inc_temp_C), scales = "free_y") +
-  labs(
-    title = "Area cutoff = 2Vs, Fraction = Phospho (F3)"
-  ) +
-  theme_bw() +
-  theme()
-```
-
-# Join with abundance data and filter
-
-Let's generate abundance-weighted means of the data to see how the community d2H increases over time. We can then use these to calculate assemblage-level biomass turnover rates.
-
-We'll apply an area filter of \> 2Vs.
-
-```{r}
-irms_w_FID <- irms_calibrated |> 
-  left_join(FID_data, by = c("sample_id", "site", "inc_temp_C", "inc_time_d", "compound", "fraction")) |> 
-  # pare down the data
-  select(-c(folder, rep, rt_start, rt_end, amp2, amp3, area3, bgrd2_end, 
-            bgrd3_start,  bgrd3_end, `r3/2`, `rd3/2`, `d3/2`, n_overlapping, 
-            n_matches, ref_ratio_at_rt, rel_area, mean_amp_identified,
-            ref_peak_outliers)) |> 
-  # apply area filter
-  filter(area2 >= 2)
-```
-
-Inspect the data
-
-```{r}
-irms_w_FID |>
-  ggplot() +
-  aes(
-    x = cal_d2H,
-    y = abs_mass_analyte_total_ng_per_g, label = paste(sample_id, compound),
-    color = as.factor(inc_time_d),
-    shape = site
-  ) +
-  geom_point() +
-  theme_bw()
-```
-
-# Visualize differences between memory corrected data and non-corrected data
+# Visualize differences between mem and no mem
 
 ```{r}
 irms_cal_all <- readxl::read_excel("data_output/samples_gcirms_data_all.xlsx") |> 
@@ -229,21 +148,256 @@ irms_cal_all <- readxl::read_excel("data_output/samples_gcirms_data_all.xlsx") |
   # This script focuses on Fox Permafrost tunnel.
   filter(experiment == "Fox, AK")
 
-irms_cal_all |> 
-  filter(area2 >= 2 & area2 < 20) |> 
+
+p_mem_full <- irms_cal_all |> 
+  filter(area2 >= 2) |> 
   filter(!is.na(cal_d2H_yes_mem)) |> 
-  mutate(diff_mem_nomem = cal_d2H_no_mem - cal_d2H_yes_mem) |> 
+  ggplot(
+    aes(
+      x = d2H_to_F2H(cal_d2H_no_mem),
+      y = d2H_to_F2H(cal_d2H_yes_mem)
+    )
+  ) +
+  geom_point(shape = 1) +
+  geom_abline() +
+  geom_smooth(method = "lm") +
+  scale_x_log10() +
+  scale_y_log10() +
+  labs(
+    x = "F2H (No Memory Effect Correction)",
+    y = "F2H (With Memory Effect Correction"
+  ) +
+  theme_classic() +
+  theme(
+    aspect.ratio = 1
+    )
+p_mem_full
+
+p_mem_residuals <- irms_cal_all |> 
+  filter(area2 >= 2) |> 
+  filter(!is.na(cal_d2H_yes_mem)) |> 
+  mutate(diff_mem_nomem = 
+           d2H_to_F2H(cal_d2H_no_mem) - d2H_to_F2H(cal_d2H_yes_mem)) |> 
   ggplot(
     aes(
       y = diff_mem_nomem,
       x = area2,
-      color = as.factor(inc_time_d)
+      
     )
   ) +
-  geom_point() +
+  geom_point(aes(color = as.factor(inc_time_d))) +
+  geom_smooth(method = "loess") +
   labs(
-    y = "d2H no correction - d2H memory corrected"
+    y = "Standard Residual",
+    x = "Area2 (Vs)",
+    color = "Incubation Time (days)"
   ) +
+  scale_color_brewer(palette = "Set2") +
+  geom_vline(xintercept = 2, color = "darkred") +
+  scale_x_continuous(breaks = c(0, 2, 10, 20, 30, 40)) +
+  theme_bw() +
+  theme(
+    aspect.ratio = 1,
+    legend.position = "bottom"
+  )
+p_mem_residuals
+
+cowplot::plot_grid(p_mem_full, p_mem_residuals,
+                   labels = c("A", "B"))
+```
+
+Inspect the data we have
+
+```{r}
+irms_calibrated |> 
+  select(sample_id, site, inc_time_d, inc_temp_C, fraction) |> 
+  arrange(fraction, site, inc_temp_C, inc_time_d) |> 
+  unique() |> 
+  gt::gt() |> 
+  gt::data_color(columns = inc_temp_C, palette = "Reds") |> 
+  gt::data_color(columns = inc_time_d, palette = "Blues") |> 
+  gt::data_color(columns = fraction, palette = "Greens") |> 
+  gt::data_color(columns = site, palette = "Set1")
+```
+
+Load GC-FID data (see `01_GC-FID_Prep.qmd` for generation/analysis).
+
+```{r}
+FID_data <- read_rds("cache/FID_absolute_quant.RDS") |> 
+  mutate(site = case_when(core == "US" ~ "Surface", TRUE ~ core)) |> 
+  rename(inc_temp_C = temp, compound = `Peak Name`) |> 
+  select(sample_id, compound, fraction, site, inc_temp_C, inc_time_d, 
+         abs_mass_analyte_total_ng_per_g) |> 
+  # fix names to match IRMS dataset
+  mutate(
+    compound = case_when(
+      str_detect(compound, "16:1") ~ "16:1",
+      str_detect(compound, "18:1") ~ "18:1",
+      str_detect(compound, "18:2") ~ "18:2",
+      TRUE ~ compound
+    )
+  ) |> 
+  group_by(sample_id, fraction, site, inc_temp_C, inc_time_d, compound) |> 
+  # combine the unsaturated compounds together
+  summarize(
+    abs_mass_analyte_total_ng_per_g = sum(abs_mass_analyte_total_ng_per_g, 
+                                          na.rm = TRUE)
+    ) |> 
+  ungroup()
+
+```
+
+# Aggregate unsaturated compounds together
+
+```{r}
+irms_calibrated_agg <- irms_calibrated |> 
+  mutate(
+    compound = case_when(
+      str_detect(compound, "16:1") ~ "16:1",
+      str_detect(compound, "18:1") ~ "18:1",
+      str_detect(compound, "18:2") ~ "18:2",
+      TRUE ~ compound
+    )
+  ) |> 
+  select(sample_id, compound, everything()) |> 
+  group_by(sample_id, fraction, site, inc_temp_C, inc_time_d, standards, compound) |> 
+  summarize_if(
+    is.numeric, mean, na.rm = TRUE
+  )
+```
+
+# Inspect the data
+
+```{r}
+irms_calibrated_agg |>
+  filter(area2 >= 2) |> 
+  filter(inc_time_d != 180) |> 
+  filter(!site == "Surface") |> 
+  filter(fraction == "F3") |> 
+  ggplot() +
+  aes(
+    x = inc_time_d,
+    y = cal_d2H,
+    color = compound,
+    label = compound,
+    size = area2
+  ) +
+  geom_pointrange(
+    aes(
+      ymin = cal_d2H - cal_d2H_se,
+      ymax = cal_d2H + cal_d2H_se
+    )
+  ) +
+  scale_size_continuous(range = c(0.5, 2)) +
+  geom_line() +
+  geomtextpath::geom_textline(vjust = -1, size = 2) +
+  scale_x_continuous(breaks = c(0, 7, 30)) +
+  scale_color_viridis_d() +
+  facet_wrap(vars(site, inc_temp_C), scales = "free_y", ncol = 3) +
+  labs(
+    #title = "Area cutoff = 2Vs, Fraction = Phospho (F3)"
+  ) +
+  theme_bw() +
+  theme()
+```
+
+Across a given core and its incubations done at different temperatures, the t=0 timepoint is experimentally identical. Therefore, to get better constraints on F2H at t=0, we'll calculate an average d2H per compound, weighted by the inverse squared error. This is essentially saying "let's trust values for F2H_T0 that have lower error more than those with higher error." This will allow us to have better certainty in the t=0 d2H even in samples with low area.
+
+```{r}
+irms_t0 <- irms_calibrated_agg |> 
+  ungroup() |> 
+  filter(inc_time_d == 0) |> 
+  group_by(fraction, site, compound) |> 
+  mutate(
+    d2H_norm_weights = (1/(cal_d2H_se^2)) / sum(1/cal_d2H_se^2),
+  ) |> 
+  summarize(
+    .groups = "keep",
+    t0_d2H_unweighted_mean = mean(cal_d2H),
+    t0_d2H_weighted_mean = sum(d2H_norm_weights * cal_d2H),
+    # se of the se
+    t0_d2H_weighted_mean_se = sum(d2H_norm_weights * cal_d2H_se)
+  )
+
+irms_calibrated_agg_w_t0 <- irms_calibrated_agg |> 
+  left_join(irms_t0, by = join_by(fraction, site, compound)) |> 
+  mutate(
+    cal_d2H = case_when(
+      inc_time_d == 0 ~ t0_d2H_weighted_mean,
+      TRUE ~ cal_d2H
+      ),
+    cal_d2H_se = case_when(
+      inc_time_d == 0 ~ t0_d2H_weighted_mean_se,
+      TRUE ~ cal_d2H_se
+    )
+    )
+
+irms_calibrated_agg_w_t0 |> 
+  filter(area2 >= 2) |> 
+  filter(inc_time_d != 180) |> 
+  filter(!site == "Surface") |> 
+  filter(fraction == "F2") |> 
+  ggplot() +
+  aes(
+    x = inc_time_d,
+    y = cal_d2H,
+    color = compound,
+    label = compound,
+    size = area2
+  ) +
+  geom_line(linewidth = 0.5) +
+  geom_pointrange(
+    aes(
+      ymin = cal_d2H - cal_d2H_se,
+      ymax = cal_d2H + cal_d2H_se
+    )
+  ) +
+  scale_size_continuous(range = c(0.5, 2)) +
+  #geomtextpath::geom_textline(vjust = -1, size = 2) +
+  scale_x_continuous(breaks = c(0, 7, 30)) +
+  scale_color_viridis_d() +
+  facet_wrap(vars(site, inc_temp_C), scales = "free_y", ncol = 3) +
+  labs(
+    #title = "Area cutoff = 2Vs, Fraction = Phospho (F3)"
+  ) +
+  theme_bw() +
+  theme()
+```
+
+# Join with abundance data and filter
+
+Let's generate abundance-weighted means of the data to see how the community d2H increases over time. We can then use these to calculate assemblage-level biomass turnover rates.
+
+We'll apply an area filter of \> 2Vs.
+
+```{r}
+irms_w_FID <- irms_calibrated_agg_w_t0 |> 
+  left_join(
+    FID_data,
+    by = c("sample_id", "site", "inc_temp_C", "inc_time_d", "compound", "fraction")
+  ) |> 
+  # pare down the data
+  # select(-c(folder, rep, rt_start, rt_end, amp2, amp3, area3, bgrd2_end, 
+  #           bgrd3_start,  bgrd3_end, `r3/2`, `rd3/2`, `d3/2`, n_overlapping, 
+  #           n_matches, ref_ratio_at_rt, rel_area, mean_amp_identified,
+  #           ref_peak_outliers)) |> 
+  # apply area filter
+  filter(area2 >= 2)
+```
+
+Inspect the data
+
+```{r}
+irms_w_FID |>
+  filter(cal_d2H > -400) |> 
+  ggplot() +
+  aes(
+    x = cal_d2H,
+    y = abs_mass_analyte_total_ng_per_g, label = paste(sample_id, compound),
+    color = as.factor(inc_time_d),
+    shape = site
+  ) +
+  geom_point() +
   theme_bw()
 ```
 
@@ -255,17 +409,34 @@ $$
 \bar{x} = \frac{ \sum_{i = 1}^{N} x_iw_i}{ \sum_{i = 1}^{N} w_i }
 $$
 
-Where $x_i$ is the isotopic composition of a compound $i$ and $w_i$ is the relative abundance (weighting) of compound $i$. Here, our weight (w) is the compound abundance determined by GC-FID: `abs_mass_analyte_total_ng_per_g` and our data (x) is the calibrated d2H.
+Where $x_i$ is the isotopic composition of a compound $i$ and $w_i$ is the relative abundance (weighting) of compound $i$. Here, our weight (w) is the compound abundance determined by GC-FID: `abs_mass_analyte_total_ng_per_g` and our data (x) is the calibrated d2H `cal_d2H`. We also take the abundance-weighted mean of our standard error `cal_d2H_se` .
 
 ```{r}
 irms_w_FID_wm <- irms_w_FID |> 
-  group_by(fraction, site, inc_temp_C, inc_time_d) |> 
+  group_by(sample_id, fraction, site, inc_temp_C, inc_time_d) |> 
+  # calculate weighted means:
   dplyr::summarise(
-    cal_d2H_wm = 
+    cal_d2H_wm =
       sum(cal_d2H * abs_mass_analyte_total_ng_per_g, na.rm = TRUE) /
       sum(abs_mass_analyte_total_ng_per_g, na.rm = TRUE),
+    cal_d2H_se_wm =
+      sum(cal_d2H_se * abs_mass_analyte_total_ng_per_g, na.rm = TRUE) /
+      sum(abs_mass_analyte_total_ng_per_g, na.rm = TRUE),
+    mean_mass_ng = mean(abs_mass_analyte_total_ng_per_g, na.rm = TRUE),
     .groups = "keep"
-  )
+  ) |> 
+  mutate(
+    # need to convert these to absolute delta values instead of delta ranges
+    # in order to convert to fractional
+    cal_d2H_se_wm.upper = cal_d2H_wm + cal_d2H_se_wm,
+    cal_d2H_se_wm.lower = cal_d2H_wm - cal_d2H_se_wm,
+    cal_F2H_wm = d2H_to_F2H(cal_d2H_wm),
+    cal_F2H_se_wm.upper = d2H_to_F2H(cal_d2H_se_wm.upper),
+    cal_F2H_se_wm.lower = d2H_to_F2H(cal_d2H_se_wm.lower),
+    cal_F2H_se_wm = cal_F2H_se_wm.upper - cal_F2H_wm
+  ) |> 
+  select(-c(cal_d2H_se_wm.upper, cal_d2H_se_wm.lower, cal_F2H_se_wm.upper,
+            cal_F2H_se_wm.lower))
 
 
 # visualize the weighted mean data
@@ -278,105 +449,758 @@ irms_w_FID_wm |>
     x = inc_time_d,
     y = cal_d2H_wm
   ) +
-  geom_point() +
-  geom_line() +
-  facet_wrap(vars(site, inc_temp_C))
-```
-
-# Calculate growth rate
-
-## Calculate mean F2H of t0 compounds
-
-```{r}
-sample_peak_table_t0 <- sample_peak_table |> 
-  filter(inc_time_d == 0) |> 
-  group_by(compound, site) |> 
-  dplyr::summarize(mean_F2H_t0 = mean(F2H, na.rm = TRUE)) |> 
-  ungroup() |> 
-  filter(!is.na(compound))
-
-sample_FA_t0_mean <- sample_peak_table_t0 |> 
-  pull(mean_F2H_t0) |> mean()
-```
-
-### Adjust label strengths
-
-```{r}
-sample_peak_table_FL <- sample_peak_table |> 
-  left_join(label_dD, by = "sample_id") |> 
-  mutate(F2H_label = case_when(
-    is.na(F2H_label) ~ F2H_label_JCR,
-    TRUE ~ F2H_label
-    )
-  ) |> select(-F2H_label_JCR)
-```
-
-### Growth Calcs
-
-```{r}
-growth_data <- sample_peak_table_FL |> 
-  #add in the t0 data
-  left_join(sample_peak_table_t0, by = c("compound", "site")) |> 
-  mutate(
-    mean_F2H_t0 = case_when(
-      experiment == "JCR" ~ 0.00014247086, # mean natabund from Caro et al. 2023
-      experiment == "Fox, AK" ~ mean_F2H_t0
+  geom_line(color = "gray") +
+  geom_point(size = 2) +
+  geom_linerange(
+    aes(
+      ymin = (cal_d2H_wm - cal_d2H_se_wm) ,
+      ymax = (cal_d2H_wm + cal_d2H_se_wm) 
     ),
-    # for peaks not ID'd in t0 sample, use mean value of all t0 FAs
-    mean_F2H_t0 = case_when(
-      is.na(mean_F2H_t0) ~ sample_FA_t0_mean,
-      TRUE ~ mean_F2H_t0
-    )
-  ) |> 
+  ) +
+  facet_wrap(vars(site, inc_temp_C), ncol = 3, scales = "free") +
+  #coord_cartesian(ylim = c(-400, -100)) +
+  theme_bw()
+
+# same plot but in fractional abundance
+# visualize the weighted mean data
+irms_w_FID_wm |> 
+  filter(inc_time_d < 180) |> 
+  filter(fraction != "F2") |> 
+  filter(site != "Surface") |> 
+  ggplot() +
+  aes(
+    x = inc_time_d,
+    y = cal_F2H_wm*1e6
+  ) +
+  geom_line(color = "gray") +
+  geom_point(size = 2) +
+  geom_linerange(
+    aes(
+      ymin = (cal_F2H_wm - cal_F2H_se_wm)*1e6 ,
+      ymax = (cal_F2H_wm + cal_F2H_se_wm)*1e6
+    ),
+  ) +
+  facet_wrap(vars(site, inc_temp_C), ncol = 3, scales = "free") +
+  #coord_cartesian(ylim = c(-400, -100)) +
+  labs(
+    y = "F2H (ppm)",
+    x = "Incubation Time (days)"
+  ) +
+  theme_bw()
+```
+
+# Calculate growth rates (subsurface)
+
+## Convert d2H to F2H –\> calculate mean F2H of t0 compounds
+
+```{r}
+irms_w_FID_wm_t0 <- irms_w_FID_wm |> 
+  filter(inc_time_d == 0) |> 
+  select(-inc_time_d) |> 
+  filter(fraction == "F3") |> 
+  group_by(site) |> 
+  dplyr::summarise(
+    mean_F2H_wm_t0 = mean(cal_F2H_wm, na.rm = TRUE),
+    mean_F2H_se_wm_t0 = mean(cal_F2H_se_wm)
+  ) |> ungroup()
+
+irms_w_FID_wm_t0 |> knitr::kable()
+
+irms_w_FID_wm_t0_F2 <- irms_w_FID_wm |> 
+  filter(inc_time_d == 0) |> 
+  select(-inc_time_d) |> 
+  filter(fraction == "F2") |> 
+  group_by(site) |> 
+  dplyr::summarise(
+    mean_F2H_wm_t0 = mean(cal_F2H_wm, na.rm = TRUE),
+    mean_F2H_se_wm_t0 = mean(cal_F2H_se_wm)
+  ) |> ungroup()
+
+irms_w_FID_wm_t0_F2 |> knitr::kable()
+```
+
+## Calculate
+
+Here we use an average cell PLFA content of 1.4E-17 mol PLFA per cell. Assuming an average PLFA molecular weight of 250g/mol, this represents 3.50333E-15 g PLFA per cell, or 0.003503333 pg PLFA per cell. Cite: The use of phospholipid fatty acid analysis to estimate bacterial and fungal biomass in soil, Frostegard & Baath (1994):
+
+$$
+x\: pg PLFA \times \frac{1 \: cell}{0.003503333 \: pg \: PLFA} = y \: cells
+$$
+
+### Calculate F3 (Phospho)
+
+```{r}
+growth_data_F3 <- irms_w_FID_wm |> 
+  ungroup() |> 
+  filter(fraction != "F2") |> 
+  # join in t0 F2H data:
+  left_join(irms_w_FID_wm_t0, by = join_by(site)) |> 
+  # join in label (FL) F2H data:
+  left_join(label_dD, join_by(sample_id)) |> 
+  filter(inc_time_d != 0) |>   # can't calculate growth where dt = 0
+  # calculate growth (u_d) and error in growth (u_d_se):
   mutate(
-    u_d = case_when(
-      inc_time_d == 0 ~ 0, # growth rate of organisms at t0 is zero
-      inc_time_d > 0 ~
-        calculate_turnover(
-        a = 0.71,
-        FT = F2H,
-        F0 = mean_F2H_t0,
-        FL = F2H_label,
-        t = inc_time_d
-        )
+  # calculate difference between FT and F0:
+  del_F2H = cal_F2H_wm - mean_F2H_wm_t0,
+    u_d = calculate_turnover(
+      a = 0.71,
+      FL = F2H_label,
+      FT = cal_F2H_wm,
+      F0 = mean_F2H_wm_t0,
+      t = inc_time_d
+    ),
+    u_d_se = calculate_sigma_mu(
+      a = 0.71,
+      t = inc_time_d,
+      F_L = F2H_label,
+      F_T = cal_F2H_wm,
+      F_0 = mean_F2H_wm_t0,
+      sa = 0,
+      sF_0 = mean_F2H_se_wm_t0,
+      sF_L = 0,
+      sF_T = cal_F2H_se_wm
     )
   ) |> 
-  rename_FAs() # update FA names based on putative identification
-```
-
-Inspect the data
-
-```{r}
-growth_data |> 
-  select(sample_id, compound, u_d, F2H, mean_F2H_t0, F2H_label) |> 
-  filter(is.na(u_d)) |> 
-  gt::gt()
-```
-
-# Join with abundance data
-
-First let's make a smaller/tidier version of growth_data that is more amenable to joining:
-
-```{r}
-growth_data_tidy <- growth_data |> 
-  filter(experiment == "Fox, AK") |> # ignore JCR samples
-  select(
-    sample_id,
-    site,
-    inc_temp_C,
-    inc_time_d,
-    fraction,
-    compound, 
-    n_C,
-    d2H, at2H, F2H,
-    u_d
+  # Is it quantifiable? Let's say YES if growth > 0 and rel error > 0.5 (50%)
+  mutate(
+    rel_error = u_d_se/u_d,
+    detected = if_else(del_F2H - cal_F2H_se_wm > mean_F2H_se_wm_t0, TRUE, FALSE),
+    quantifiable = if_else(u_d > 0 & rel_error <= 1 & detected, TRUE, FALSE),
+    reason_for_exclusion = case_when(
+      quantifiable ~ "",
+      !quantifiable & u_d == 0 ~ "No isotopic enrichment observed",
+      !quantifiable & rel_error > 1 ~ "Relative error > 100%"
+    )
+  ) |> 
+  # calculate generation time
+  mutate(
+    # gen time = ln(2) / u_d
+    gen_d = log(2) / u_d,
+    turnover_d = 1 / u_d
+  ) |> 
+  # calculate mass turnover
+  mutate(
+    mean_mass_pg = mean_mass_ng * 1000,
+    mean_turnover_ng_d = mean_mass_ng * u_d,
+    mean_turnover_pg_d = mean_turnover_ng_d * 1000
+  ) |> 
+  # estimate number of cells
+  mutate(
+    mean_cells = mean_mass_pg / 0.003503333, # pg PLFA per cell
+    mean_cell_turnover_cell_d = mean_cells * u_d,
+    # turnover fraction
+    turnover_fraction = mean_cell_turnover_cell_d / mean_cells
   )
-
-growth_w_FID <- growth_data_tidy |> 
-  left_join(FID_data, by = c("sample_id", "site", "inc_temp_C", "inc_time_d", "compound", "fraction"))
 ```
 
-## Abundance-weighted mean
+### Calculate F2 (Glyco)
+
+Do the same thing for glycolipid fraction:
+
+```{r}
+growth_data_F2 <- irms_w_FID_wm |> 
+  ungroup() |> 
+  # choose glycos (F2)
+  filter(fraction == "F2") |> 
+  # join in t0 F2H data:
+  left_join(irms_w_FID_wm_t0_F2, by = join_by(site)) |> 
+  # join in label (FL) F2H data:
+  left_join(label_dD, join_by(sample_id)) |> 
+  filter(inc_time_d != 0) |>   # can't calculate growth where dt = 0
+  # calculate growth (u_d) and error in growth (u_d_se):
+  mutate(
+    # calculate difference between FT and F0:
+    del_F2H = cal_F2H_wm - mean_F2H_wm_t0,
+    # calculate biomass grwoth rate
+    u_d = calculate_turnover(
+      a = 0.71,
+      FL = F2H_label,
+      FT = cal_F2H_wm,
+      F0 = mean_F2H_wm_t0,
+      t = inc_time_d
+    ),
+    u_d_se = calculate_sigma_mu(
+      a = 0.71,
+      t = inc_time_d,
+      F_L = F2H_label,
+      F_T = cal_F2H_wm,
+      F_0 = mean_F2H_wm_t0,
+      sa = 0,
+      sF_0 = mean_F2H_se_wm_t0,
+      sF_L = 0,
+      sF_T = cal_F2H_se_wm
+    )
+  ) |> 
+  # Is it quantifiable? Let's say YES if growth > 0 and rel error > 0.5 (50%)
+  mutate(
+    rel_error = u_d_se/u_d,
+    # if lower error on Ft is > error on F0, then is detectable
+    detected = if_else(del_F2H - cal_F2H_se_wm > mean_F2H_se_wm_t0, TRUE, FALSE),
+    quantifiable = if_else(u_d > 0 & rel_error <= 1 & detected, TRUE, FALSE),
+    reason_for_exclusion = case_when(
+      quantifiable ~ "",
+      !quantifiable & u_d == 0 ~ "No isotopic enrichment observed",
+      !quantifiable & rel_error > 1 ~ "Relative error > 100%"
+    )
+  ) |> 
+  # calculate generation time
+  mutate(
+    # gen time = ln(2) / u_d
+    gen_d = log(2) / u_d,
+    turnover_d = 1 / u_d
+  ) |> 
+  # calculate mass turnover
+  mutate(
+    mean_mass_pg = mean_mass_ng * 1000,
+    mean_turnover_ng_d = mean_mass_ng * u_d,
+    mean_turnover_pg_d = mean_turnover_ng_d * 1000
+  ) |> 
+  # estimate number of cells
+  mutate(
+    mean_cells = mean_mass_pg / 0.003503333, # pg PLFA per cell
+    mean_cell_turnover_cell_d = mean_cells * u_d,
+    # turnover fraction
+    turnover_fraction = mean_cell_turnover_cell_d / mean_cells
+  )
+```
+
+## Del F2H Plots
+
+### Del F2H (F3)
+
+```{r}
+p_delF2H_F3 <- growth_data_F3 |> 
+  filter(site != "Surface") |> 
+  filter(inc_time_d != 180) |> 
+  mutate(
+    condition = paste0(site, " | ", inc_temp_C, "C", " | ", inc_time_d, 
+                       " day incubation"),
+    condition = forcats::fct_reorder(condition, cal_F2H_wm - mean_F2H_wm_t0)
+  ) |> 
+  ggplot() +
+  aes(
+    x = del_F2H*1e6,
+    y = condition, color = detected
+  ) +
+  geom_vline(xintercept = 0) +
+  geom_segment(aes(xend = 0, yend = condition), color = "lightgray", linewidth = 0.1) +
+  geom_errorbar(
+    aes(xmin = -mean_F2H_se_wm_t0*1e6, xmax = mean_F2H_se_wm_t0*1e6),
+    color = "black", width = 0.25
+  ) +
+  geom_linerange(
+    aes(xmin = (cal_F2H_wm - mean_F2H_wm_t0 - cal_F2H_se_wm)*1e6,
+        xmax = (cal_F2H_wm - mean_F2H_wm_t0 + cal_F2H_se_wm)*1e6
+        )
+    ) +
+  geom_point(aes(shape = quantifiable), size = 3) +
+  scale_shape_manual(values = c(4, 16)) +
+  scale_color_manual(values = c("#eb4034", "#ed926b")) +
+  ggprism::annotation_ticks(sides = "b") +
+  coord_cartesian(xlim = c(-5, 90)) +
+  labs(
+    x = latex2exp::TeX("$\\Delta ^2F$ (ppm)"), y = "",
+    shape = "Quantifiable", color = "Detected", title = "Phospho-IPL"
+  ) +
+  theme_classic() +
+  theme(
+    axis.line.y = element_blank(),
+    axis.text = element_text(color = "black"),
+    axis.text.y = element_text(hjust = 0),
+    axis.ticks.x = element_blank()
+  )
+p_delF2H_F3
+```
+
+### Del F2H (F2)
+
+```{r}
+p_delF2H_F2 <- growth_data_F2 |> 
+  filter(site != "Surface") |> 
+  filter(inc_time_d != 180) |> 
+  mutate(
+    condition = paste0(site, " | ", inc_temp_C, "C", " | ", inc_time_d, 
+                       " day incubation"),
+    condition = forcats::fct_reorder(condition, cal_F2H_wm - mean_F2H_wm_t0)
+  ) |> 
+  ggplot() +
+  aes(
+    x = (cal_F2H_wm - mean_F2H_wm_t0)*1e6,
+    y = condition, color = detected
+  ) +
+  geom_vline(xintercept = 0) +
+  geom_errorbar(
+    aes(xmin = -mean_F2H_se_wm_t0*1e6, xmax = mean_F2H_se_wm_t0*1e6),
+    color = "black", width = 0.25
+  ) +
+  geom_segment(aes(xend = 0, yend = condition), color = "lightgray", linewidth = 0.1) +
+  geom_linerange(
+    aes(xmin = (cal_F2H_wm - mean_F2H_wm_t0 - cal_F2H_se_wm)*1e6,
+        xmax = (cal_F2H_wm - mean_F2H_wm_t0 + cal_F2H_se_wm)*1e6
+        )
+    ) +
+  geom_point(aes(shape = quantifiable, ), size = 3) +
+  scale_shape_manual(values = c(4, 16)) +
+  scale_color_manual(values = c("#eb4034", "#7dc0a6")) +
+  coord_cartesian(xlim = c(-5, 90)) +
+  ggprism::annotation_ticks(sides = "b") +
+  labs(
+    x = latex2exp::TeX("$\\Delta ^2F$ (ppm)"), y = "",
+    shape = "Quantifiable", color = "Detected",
+    title = "Glyco-IPL"
+  ) +
+  theme_classic() +
+  theme(
+    axis.line.y = element_blank(),
+    axis.text = element_text(color = "black"),
+    axis.text.y = element_text(hjust = 0)
+  )
+p_delF2H_F2
+```
+
+### Combined Del F2H (F2/F3)
+
+```{r}
+
+p_delF2H_sub_combined <- cowplot::plot_grid(p_delF2H_F2, p_delF2H_F3, ncol = 1, labels = c("A", "B"))
+p_delF2H_sub_combined
+```
+
+## GTs
+
+### Phospho F3 (GT)
+
+```{r}
+gt_phospho_subsurface <- growth_data_F3 |> 
+  filter(site != "Surface") |> 
+  filter(inc_time_d != 180) |> 
+  select(-fraction) |> 
+  select(sample_id, site, inc_temp_C, inc_time_d, detected, quantifiable, u_d,
+         mean_mass_pg, mean_turnover_pg_d, mean_cells, mean_cell_turnover_cell_d,
+         turnover_fraction) |> 
+  arrange(site, inc_temp_C, inc_time_d) |> 
+  gt() |> 
+  cols_label(
+    site = "Core",
+    inc_temp_C = "Incubation Temperature (C)",
+    u_d = "Growth Rate (days {{^-1}})",
+    inc_time_d = "Incubation Time (days)",
+    detected = "Growth Detected?",
+    quantifiable = "Growth Quantifiable?",
+    mean_turnover_pg_d = "PLFA turnover rate (pg/day)",
+    mean_mass_pg = "PLFA Content (pg)",
+    mean_cells = "Cell density (cells/g)",
+    mean_cell_turnover_cell_d = "Cell turnover (cells/day)"
+  ) |> 
+  data_color(u_d, palette = "viridis") |> 
+  data_color(mean_turnover_pg_d, palette = "viridis") |> 
+  data_color(quantifiable, 
+             method = "factor",
+             palette = c("white", "#13ad3f")) |> 
+  data_color(detected, method = "factor", palette = c("white", "#13ad3f")) |> 
+  cols_hide(sample_id) |> 
+  fmt_scientific(u_d, decimals = 1) |> 
+  fmt_scientific(mean_mass_pg, decimals = 1) |> 
+  fmt_scientific(columns = c(mean_cells, mean_cell_turnover_cell_d), decimals = 1) |> 
+  fmt_scientific(columns = c(turnover_fraction), decimals = 1) |> 
+  fmt_number(mean_turnover_pg_d, decimals = 1) |> 
+  cols_align("center") |> 
+  tab_footnote(footnote = "Values exhibit high error if 'Growth Quantifiable' 
+               is FALSE, take values as approximations.",
+               locations = cells_column_labels(
+                 columns = c("u_d", "mean_turnover_pg_d", 
+                             "mean_cell_turnover_cell_d"))) |> 
+  tab_footnote(
+    footnote = "Reported per gram of permafrost.",
+    locations = cells_column_labels(columns = c("mean_mass_pg", "mean_turnover_pg_d",
+                                                "mean_cells"))
+  ) |> 
+  tab_footnote(
+    footnote = "Estimated using PLFA/cell conversion factors reported in reference #.",
+    locations = cells_column_labels(
+      columns = c("mean_cells", "mean_cell_turnover_cell_d"))
+  )
+gt_phospho_subsurface
+
+gtsave(gt_phospho_subsurface, "data_output/phospho_subsurface_gt.html")
+gtsave(gt_phospho_subsurface, "data_output/phospho_subsurface_gt.png")
+```
+
+### Glyco F2 (GT)
+
+```{r}
+
+gt_glyco_subsurface <- growth_data_F2 |> 
+  filter(site != "Surface") |> 
+  filter(inc_time_d != 180) |> 
+  select(-fraction) |> 
+  select(sample_id, site, inc_temp_C, inc_time_d, detected, quantifiable, u_d,
+         mean_mass_pg, mean_turnover_pg_d, mean_cells, mean_cell_turnover_cell_d,
+         turnover_fraction) |> 
+  arrange(site, inc_temp_C, inc_time_d) |> 
+  gt() |> 
+  cols_label(
+    site = "Core",
+    inc_temp_C = "Incubation Temperature (C)",
+    u_d = "Growth Rate (days {{^-1}})",
+    inc_time_d = "Incubation Time (days)",
+    detected = "Growth Detected?",
+    quantifiable = "Growth Quantifiable?",
+    mean_turnover_pg_d = "GLFA turnover rate (pg/day)",
+    mean_mass_pg = "GLFA Content (pg)",
+    mean_cells = "Cell density (cells/g)",
+    mean_cell_turnover_cell_d = "Cell turnover (cells/day)"
+  ) |> 
+  data_color(u_d, palette = "viridis") |> 
+  data_color(mean_turnover_pg_d, palette = "viridis") |> 
+  data_color(quantifiable, 
+             method = "factor",
+             palette = c("white", "#13ad3f")) |> 
+  data_color(detected, method = "factor", palette = c("white", "#13ad3f")) |> 
+  cols_hide(sample_id) |> 
+  fmt_scientific(u_d, decimals = 1) |> 
+  fmt_scientific(mean_mass_pg, decimals = 1) |> 
+  fmt_scientific(columns = c(mean_cells, mean_cell_turnover_cell_d), decimals = 1) |> 
+  fmt_number(mean_turnover_pg_d, decimals = 1) |> 
+  cols_align("center") |> 
+  tab_footnote(footnote = "Values exhibit high error if 'Growth Quantifiable' 
+               is FALSE, take values as approximations.",
+               locations = cells_column_labels(
+                 columns = c("u_d", "mean_turnover_pg_d", 
+                             "mean_cell_turnover_cell_d"))) |> 
+  tab_footnote(
+    footnote = "Reported per gram of permafrost.",
+    locations = cells_column_labels(columns = c("mean_mass_pg", "mean_turnover_pg_d",
+                                                "mean_cells"))
+  ) |> 
+  tab_footnote(
+    footnote = "Estimated using PLFA/cell conversion factors reported in reference #.",
+    locations = cells_column_labels(
+      columns = c("mean_cells", "mean_cell_turnover_cell_d"))
+  )
+gt_glyco_subsurface
+
+gtsave(gt_glyco_subsurface, filename = "data_output/glyco_subsurface_gt.html")
+gtsave(gt_glyco_subsurface, filename = "data_output/glyco_subsurface_gt.png")
+```
+
+## Lipid Turnover Rates
+
+### PLFA
+
+```{r}
+p_PLFA_turnover <- growth_data_F3 |> 
+  filter(site != "Surface") |> 
+  filter(inc_time_d != 180) |> 
+  mutate(
+    condition = paste0(site, " | ", inc_temp_C, "C", " | ", inc_time_d, 
+                       " day incubation"),
+    condition = forcats::fct_reorder(condition, mean_turnover_pg_d)
+  ) |> 
+  ggplot(
+    aes(
+      x = mean_turnover_pg_d,
+      y = condition,
+      color = detected,
+      shape = quantifiable
+    )
+  ) +
+  geom_point(size = 3) +
+  scale_shape_manual(values = c(4, 16)) +
+  scale_color_manual(values = c("#eb4034", "#ed926b")) +
+  coord_cartesian(xlim = c(0, 625)) +
+  labs(
+    x = "PLFA Turnover (pg/d/g permafrost)", y = "",
+    shape = "Quantifiable", color = "Detected",
+    title = "Phospho-IPL"
+  ) +
+  theme_classic() +
+  theme(
+    axis.text = element_text(color = "black"),
+    axis.text.y = element_text(hjust = 0)
+  )
+p_PLFA_turnover
+```
+
+### GLFA
+
+```{r}
+p_GLFA_turnover <- growth_data_F2 |> 
+  filter(site != "Surface") |> 
+  filter(inc_time_d != 180) |> 
+  mutate(
+    condition = paste0(site, " | ", inc_temp_C, "C", " | ", inc_time_d, 
+                       " day incubation"),
+    condition = forcats::fct_reorder(condition, mean_turnover_pg_d)
+  ) |> 
+  ggplot(
+    aes(
+      x = mean_turnover_pg_d,
+      y = condition,
+      color = detected,
+      shape = quantifiable
+    )
+  ) +
+  geom_point(size = 3) +
+  scale_shape_manual(values = c(4, 16)) +
+  scale_color_manual(values = c("#eb4034", "#7dc0a6")) +
+  coord_cartesian(xlim = c(0, 625)) +
+  labs(
+    x = "GLFA Turnover (pg/d/g permafrost)", y = "",
+    shape = "Quantifiable", color = "Detected",
+    title = "Glyco-IPL"
+  ) +
+  theme_classic() +
+  theme(
+    axis.text = element_text(color = "black"),
+    axis.text.y = element_text(hjust = 0)
+  )
+p_GLFA_turnover
+```
+
+### Combined PLFA/GLFA turnover
+
+```{r}
+p_growth_sub_combined <- cowplot::plot_grid(p_GLFA_turnover, p_PLFA_turnover, ncol = 1, labels = c("C", "D"))
+p_growth_sub_combined
+```
+
+```{r}
+p_subsurface_figure <- cowplot::plot_grid(
+  p_delF2H_sub_combined, p_growth_sub_combined,
+  ncol = 2
+)
+p_subsurface_figure
+
+# cowplot::save_plot(
+#   filename = "fig_output/subsurface_figure_full.pdf",
+#   plot = p_subsurface_figure,
+#   base_height = 9, base_width = 11
+# )
+```
+
+## Compare with temp
+
+```{r}
+p_F2_w_T <- growth_data_F2 |> 
+  filter(site != "Surface") |> 
+  filter(inc_time_d != 180) |> 
+  mutate(
+    condition = paste0(site, " | ", inc_temp_C, "C", " | ", inc_time_d, 
+                       " day incubation"),
+    condition = forcats::fct_reorder(condition, mean_turnover_pg_d)
+  ) |> 
+  ggplot(
+    aes(
+      y = u_d,
+      x = as.factor(inc_temp_C),
+      group = as.factor(inc_temp_C)
+    )
+  ) +
+  geom_boxplot(width = 0.25) +
+  theme_classic() +
+  labs(
+    x = "Thaw temperature (C)",
+    y = "Growth Rate (per day)"
+  )
+p_F2_w_T
+
+p_F3_w_T <- growth_data_F3 |> 
+  filter(site != "Surface") |> 
+  filter(inc_time_d != 180) |> 
+  mutate(
+    condition = paste0(site, " | ", inc_temp_C, "C", " | ", inc_time_d, 
+                       " day incubation"),
+    condition = forcats::fct_reorder(condition, mean_turnover_pg_d)
+  ) |> 
+  ggplot(
+    aes(
+      y = u_d,
+      x = as.factor(inc_temp_C),
+      group = as.factor(inc_temp_C)
+    )
+  ) +
+  geom_boxplot(width = 0.25) +
+  theme_classic() +
+  labs(
+    x = "Thaw temperature (C)",
+    y = "Growth Rate (per day)"
+  )
+p_F3_w_T
+
+p_combined_w_T <- cowplot::plot_grid(p_F2_w_T, p_F3_w_T)
+p_combined_w_T
+
+cowplot::save_plot(filename = "fig_output/combined_w_temp.pdf",
+                   plot = p_combined_w_T, base_height = 5, base_width = 9)
+```
+
+## Compare F2 and F3
+
+```{r}
+growth_data_F2_tidy <- growth_data_F2 |> 
+  select(sample_id, fraction, inc_time_d, cal_F2H_wm, cal_F2H_se_wm, 
+         mean_F2H_wm_t0, mean_F2H_se_wm_t0,
+         u_d, u_d_se) |> 
+  mutate(del_F2H = mean_F2H_wm_t0 - mean_F2H_se_wm_t0) |> 
+  rename_with(~str_c("F2_", .), -c(sample_id, inc_time_d))
+
+growth_data_F3_tidy <- growth_data_F3 |> 
+  select(sample_id, fraction, site, inc_time_d, cal_F2H_wm, cal_F2H_se_wm, 
+         mean_F2H_wm_t0, mean_F2H_se_wm_t0,
+         u_d, u_d_se) |> 
+  mutate(del_F2H = mean_F2H_wm_t0 - mean_F2H_se_wm_t0) |> 
+  rename_with(~str_c("F3_", .), -c(sample_id, inc_time_d, site))
+
+growth_data_comparison <- growth_data_F2_tidy |> 
+  full_join(growth_data_F3_tidy, by = join_by(sample_id))
+
+
+growth_data_comparison |> 
+  filter(inc_time_d.x != 180 | inc_time_d.y != 180) |> 
+  filter(site != "Surface") |> 
+  ggplot() +
+  aes(
+    x = F2_u_d, y = F3_u_d, fill = site
+  ) +
+  geom_point(size = 3, shape = 21, color = "black") +
+  geom_abline() +
+  coord_cartesian(xlim = c(0, 6e-4), ylim = c(0, 6e-4)) +
+  scale_fill_brewer(palette = "Set2") +
+  ggprism::annotation_ticks(sides = "lb") +
+  labs(
+    x = latex2exp::TeX("Glycolipid Growth Rate $(d^{-1})$"),
+    y = latex2exp::TeX("Phospholipid Growth Rate $(d^{-1})$"),
+    fill = "Site"
+  ) +
+  theme_bw() +
+  theme(panel.grid = element_blank(),
+        aspect.ratio = 1,
+        axis.text = element_text(color = "black"),
+        panel.border = element_rect(color = "black", linewidth = 1),
+        axis.ticks = element_blank())
+```
+
+## Highly enriched samples
+
+```{r}
+irms_w_FID |> 
+  filter(
+    inc_time_d == 180
+  ) |> 
+  ggplot(
+    aes(
+      y = compound,
+      x = cal_d2H,
+      shape = fraction,
+      color = site
+    )
+  ) +
+  geom_point()
+```
+
+# Surface permafrost
+
+```{r}
+t0_d2H_weighted_mean_surface <- irms_w_FID |> 
+  ungroup() |> 
+  filter(fraction == "F2") |> 
+  filter(site == "Surface") |> 
+  select(t0_d2H_weighted_mean) |> 
+  pull() |> mean(na.rm = TRUE)
+
+t0_d2H_weighted_mean_se_surface <- irms_w_FID |> 
+  ungroup() |> 
+  filter(fraction == "F2") |> 
+  filter(site == "Surface") |> 
+  select(t0_d2H_weighted_mean_se) |> 
+  pull() |> mean(na.rm = TRUE)
+
+
+
+irms_w_FID_surface <- irms_w_FID |> 
+  ungroup() |> 
+  filter(site == "Surface") |> 
+  # Fill in T0 for samples that do not have reliable T0 timepoint values
+  mutate(
+    t0_d2H_weighted_mean =
+      case_when(
+        is.na(t0_d2H_weighted_mean) ~ t0_d2H_weighted_mean_surface,
+        fraction == "F3" ~ t0_d2H_weighted_mean_surface,
+        fraction == "F2" ~ t0_d2H_weighted_mean
+      ),
+    t0_d2H_weighted_mean_se = 
+      case_when(
+        is.na(t0_d2H_weighted_mean_se) ~ t0_d2H_weighted_mean_se_surface,
+        fraction == "F3" ~ t0_d2H_weighted_mean_se_surface,
+        fraction == "F2" ~ t0_d2H_weighted_mean_se
+      )
+  ) |> 
+  arrange(fraction)
+  
+
+surface_compound_list <- irms_w_FID_surface |> 
+  select(compound) |> 
+  unique() |> 
+  mutate(inc_time_d = 0, del_F2H = 0, fraction = "F3",
+         fraction_str = "Phospho-IPL")
+```
+
+## Calculate compound-specific delF2H
+
+```{r}
+CS_irms_w_FID_surface <- irms_w_FID_surface |> 
+  left_join(label_dD, join_by(sample_id)) |> 
+  # convert d2H to F2H
+  mutate(
+    cal_F2H = d2H_to_F2H(cal_d2H),
+    cal_F2H_se.lower = d2H_to_F2H(cal_d2H - cal_d2H_se),
+    cal_F2H_se.upper = d2H_to_F2H(cal_d2H + cal_d2H_se),
+    cal_F2H_se = cal_F2H_se.upper - cal_F2H_se.lower,
+    t0_F2H_weighted_mean = d2H_to_F2H(t0_d2H_weighted_mean),
+    t0_F2H_weighted_mean_se = 
+      d2H_to_F2H(t0_d2H_weighted_mean + t0_d2H_weighted_mean_se) - 
+      d2H_to_F2H(t0_d2H_weighted_mean - t0_d2H_weighted_mean_se)
+  ) |> 
+  # calculate difference between FT and F0
+  mutate(
+    del_F2H = cal_F2H - t0_F2H_weighted_mean,
+    del_F2H = if_else(del_F2H < 0, 0, del_F2H)
+  ) |> 
+  mutate(fraction_str = case_when(fraction == "F2" ~ "Glyco-IPL", fraction == "F3" ~ "Phospho-IPL")) |> 
+  bind_rows(surface_compound_list)
+  
+p_delF2H_surface <- CS_irms_w_FID_surface |> 
+  ggplot(
+    aes(
+      x = inc_time_d, y = del_F2H*1e6, group = compound, label = compound
+    )
+  ) +
+  ggrepel::geom_label_repel(
+    data = function(df) df |> filter(inc_time_d == 30),
+    nudge_x = 10, nudge_y = 100, size = 2,
+    segment.curvature = -1e-20,
+    segment.alpha = 0.5, box.padding = 0.75
+  ) +
+  geom_line(color = "gray") +
+  geom_pointrange(aes(
+    ymin = (del_F2H - cal_F2H_se)*1e6, ymax = (del_F2H + cal_F2H_se)*1e6
+  )) +
+  scale_x_continuous(breaks = c(0, 10, 20, 30)) +
+  facet_wrap(vars(fraction_str), scales = "free", ncol = 1) +
+  coord_cartesian(xlim = c(0, 50), ylim = c(0, 2200)) +
+  labs(
+    x = "Incubation Time (d)",
+    y = latex2exp::TeX("$\\Delta^{2}F$ (ppm)")
+  ) +
+  theme(
+    panel.grid.minor = element_blank(),
+    legend.position = "None"
+  )
+p_delF2H_surface
+```
+
+## Calculate weighted mean delF2H
 
 We can aggregate our growth rate measurements into assemblage-level estimates of microbial community growth by calculating an abundance-weighted mean $(\bar{x})$:
 
@@ -384,553 +1208,315 @@ $$
 \bar{x} = \frac{ \sum_{i = 1}^{N} x_iw_i}{ \sum_{i = 1}^{N} w_i }
 $$
 
-Where $x_i$ is the isotopic fractional abundance of a compound $i$ and $w_i$ is the relative abundance (weighting) of compound $i$. Here, our weight (w) is the compound abundance determined by GC-FID: `mass_analyte_ng_per_g.FID` and our data (x) is the growth rate `u_d`.
+Where $x_i$ is the isotopic composition of a compound $i$ and $w_i$ is the relative abundance (weighting) of compound $i$. Here, our weight (w) is the compound abundance determined by GC-FID: `abs_mass_analyte_total_ng_per_g` and our data (x) is the calibrated d2H `cal_d2H`. We also take the abundance-weighted mean of our standard error `cal_d2H_se` .
 
 ```{r}
-weighted_mean_growth_data <- growth_w_FID |> 
-  dplyr::group_by(site, inc_temp_C, inc_time_d, fraction) |> 
+WM_irms_w_FID_surface <- CS_irms_w_FID_surface |> 
+  group_by(fraction, inc_time_d, sample_id) |> 
   dplyr::summarise(
-    u_d = sum(u_d * mass_analyte_ng_per_g.FID, na.rm = TRUE) /
-      sum(mass_analyte_ng_per_g.FID, na.rm = TRUE),
+    del_F2H_WM =
+      sum(del_F2H * abs_mass_analyte_total_ng_per_g, na.rm = TRUE) /
+      sum(abs_mass_analyte_total_ng_per_g, na.rm = TRUE),
+    cal_F2H_se_WM =
+      sum(cal_F2H_se * abs_mass_analyte_total_ng_per_g, na.rm = TRUE) /
+      sum(abs_mass_analyte_total_ng_per_g, na.rm = TRUE),
+    mean_mass_ng = mean(abs_mass_analyte_total_ng_per_g, na.rm = TRUE),
+    t0_F2H_weighted_mean_se = mean(t0_F2H_weighted_mean_se, na.rm = TRUE),
     .groups = "keep"
   ) |> 
-  ungroup() |> 
   mutate(
-    gen_d = log(2) / u_d, # calculate weighted mean gen time
-    compound = "Weighted Mean", # plotting identifier
-    )
-```
-
-# Plots
-
-### Lipid abundance
-
-```{r}
-PLFA_sums <- growth_w_FID |> 
-  filter(fraction == "phospho-IPL") |>
-  group_by(site, inc_time_d, inc_temp_C) |> 
-  summarize(
-    PLFA_total_ng_per_g = sum(mass_analyte_ng_per_g.FID, na.rm = TRUE)
+    del_F2H_WM = case_when(inc_time_d == 0 ~ 0, TRUE ~ del_F2H_WM),
+    compound = "Weighted Mean",
+    fraction_str = case_when(
+      fraction == "F2" ~ "Glyco-IPL", fraction == "F3" ~ "Phospho-IPL")
   )
 
-PLFA_sums |> 
-  ggplot(
-    aes(
-      x = inc_time_d,
-      y = PLFA_total_ng_per_g,
-      color = as.factor(inc_temp_C)
-    )
-  ) +
-  geom_point() +
-  geom_line() +
-  scale_color_viridis_d() +
-  facet_wrap(vars(site), scales = "free_y")
-```
-
-## Fox prelim
-
-### Compound Specific µ with Mean
-
-```{r}
-p_ud_weighted <- growth_data |> 
-  filter(experiment == "Fox, AK") |> # filter out JCR
-  filter(!is.na(site)) |> # filter out site NA
-  # Add in weighted mean data:
-  bind_rows(weighted_mean_growth_data) |>
-  filter(site != "Surface") |> # plot surface sample separately
-  filter(inc_time_d == 30) |> # choose incubation time to focus on
-  filter(fraction == "phospho-IPL") |> # choose fraction
-  # factors helpful for plotting:
-  mutate(
-    inc_temp_C_str = factor(paste0(inc_temp_C, "C"), c("-4C", "4C", "12C")),
-    is_mean = if_else(compound == "Weighted Mean", true = TRUE, false = FALSE),
-    compound = str_replace(compound, "ω", "w")
-    ) |> 
-  # Plot it:
-  ggplot(
-    aes(
-      # reorder y variables in ascending order within each facet
-      y = tidytext::reorder_within(
-        compound, u_d, list(site, inc_temp_C)
-        ),
-      x = u_d
-    )
-  ) +
+# Plot Fig 1A
+p_delF2H_w_wm <- p_delF2H_surface + 
+    geom_line(data = WM_irms_w_FID_surface, 
+    aes(y = del_F2H_WM*1e6, x = inc_time_d, color = fraction_str),
+    linewidth = 2) +
   geom_point(
-    aes(shape = inc_temp_C_str, fill = inc_temp_C_str),
-    stroke = 1, size = 2,
-    color = "black"
+    data = WM_irms_w_FID_surface, 
+    aes(y = del_F2H_WM*1e6, x = inc_time_d, color = fraction_str),
+    size = 3
     ) +
-  scale_shape_manual(values = c(21, 22, 23)) +
-  ggrepel::geom_text_repel(
-    data = function(df) df |> filter(compound == "Weighted Mean"),
-    aes(
-      label = paste(formatC(u_d, format = "e", digits = 1), 
-                    " = \n", round(gen_d, 0), "days")
-      ),
-    nudge_x = 0.001,
-    nudge_y = -1,
-    color = "red",
-    size = 3,
-    segment.alpha = 0.5, segment.curvature = -1e-20
-    
-  ) +
-  scale_fill_manual(values = c("#3e0751", "#468e8c", "#f9e955")) +
-  facet_wrap(vars(inc_temp_C_str, site), ncol = 3, scales = "free_y") +
-  tidytext::scale_y_reordered() +
-  labs(
-    y = "", x = latex2exp::TeX("Compound-Specific Growth Rate $(d ^{-1})$")
-  ) +
-  guides(
-    color = "none",
-    shape = "none",
-    fill = "none"
-  ) +
-  theme_bw() +
-  theme(
-    panel.grid.minor = element_blank(),
-    panel.grid.major.y = element_blank(),
-    panel.grid.major.x = element_line(linetype = "dotted", color = "gray"),
-    strip.background = element_rect(fill = "black", color = "black"),
-    strip.text = element_text(color = "white", face = "bold")
-  )
-p_ud_weighted 
-
-# cowplot::save_plot(
-#   filename = "fig_output/p_ud_weighted.pdf",
-#   plot = p_ud_weighted,
-#   base_height = 9,
-#   base_width = 12
-# )
-```
-
-Make the same plot but with the surface samples:
-
-```{r}
-p_ud_weighted_surface <- growth_data |> 
-  filter(experiment == "Fox, AK") |> # filter out JCR
-  filter(!is.na(site)) |> # filter out site NA
-  # Add in weighted mean data:
-  bind_rows(weighted_mean_growth_data) |>
-  filter(site == "Surface") |> # plot surface sample separately
-  filter(inc_time_d == 30) |> # choose incubation time to focus on
-  filter(fraction == "phospho-IPL") |> # choose fraction
-  # factors helpful for plotting:
-  mutate(
-    inc_temp_C_str = factor(paste0(inc_temp_C, "C"), c("-4C", "4C", "12C")),
-    is_mean = if_else(compound == "Weighted Mean", true = TRUE, false = FALSE),
-    compound = str_replace(compound, "ω", "w")
-    ) |> 
-  # Plot it:
-  ggplot(
-    aes(
-      # reorder y variables in ascending order within each facet
-      y = tidytext::reorder_within(
-        compound, u_d, list(site, inc_temp_C)
-        ),
-      x = u_d
-    )
-  ) +
-  geom_point(
-    stroke = 1, size = 2, fill = "black",
-    color = "black"
-    ) +
-  ggrepel::geom_text_repel(
-    data = function(df) df |> filter(compound == "Weighted Mean"),
-    aes(
-      label = paste(formatC(u_d, format = "e", digits = 1), 
-                    " = \n", round(gen_d, 0), "days")
-      ),
-    nudge_x = 0.01,
-    nudge_y = -1,
-    color = "red",
-    size = 3,
-    segment.alpha = 0.5, segment.curvature = -1e-20
-    
-  ) +
-  #facet_wrap(vars(inc_temp_C_str, site), ncol = 3, scales = "free_y") +
-  tidytext::scale_y_reordered() +
-  #coord_cartesian(xlim = c(0, 0.25)) +
-  labs(
-    y = "", x = latex2exp::TeX("Compound-Specific Growth Rate $(day ^{-1})$"),
-    title = "Surface Permafrost"
-  ) +
-  guides(
-    color = "none",
-    shape = "none",
-    fill = "none"
-  ) +
+  scale_color_brewer(palette = "Set2") +
   theme_classic() +
-  theme(
-    axis.text.x = element_text(angle = 45, hjust = 1), 
-    panel.grid.minor = element_blank(),
-    panel.grid.major.y = element_blank(),
-    panel.grid.major.x = element_line(linetype = "dotted", color = "gray"),
-    strip.background = element_rect(fill = "white", color = "white"),
-    aspect.ratio = 1,
-    plot.title = element_text(hjust = 0.5)
-  )
-p_ud_weighted_surface 
-
-# cowplot::save_plot(
-# filename = "fig_output/p_ud_weighted_surface2.pdf",
-# plot = p_ud_weighted_surface,
-# base_height = 5,
-# base_width = 4
-# )
-```
-
-#### F2H
-
-```{r}
-p_fox_F2H <- growth_data |> 
-  filter(experiment == "Fox, AK") |> 
-  filter(site != "Surface") |> 
-  filter(!is.na(site)) |> 
-  filter(inc_time_d != 180) |> 
-  ggplot() +
-  aes(
-    #y = F2H * 1e6, # uncomment this for F2H in ppm
-    y = as.numeric(d2H), # using delta notation for now
-    x = inc_time_d,
-    color = compound,
-    shape = fraction
-  ) +
-  geom_point() +
-  facet_grid(site~as.factor(inc_temp_C)) +
   labs(
-    x = "Incubation time (days)",
-    y = latex2exp::TeX("$\\delta^{2}H_{VSMOW}$")
+    title = "Surface Permafrost (10cm)"
   ) +
-  theme_bw() +
   theme(
-    strip.text = element_text(color = "white", face = "bold"),
-    strip.background = element_rect(color = "black", fill = "black")
+    legend.position = "None",
+    strip.background = element_blank(),
+    strip.text = element_text(color = "black", face = "bold"),
+    title = element_text(color = "black", face = "bold")
   )
-p_fox_F2H
-
-# anomalously high d2H is probably an area effect. future data calibration/scrubbing will most likely remove these!
-
-# cowplot::save_plot(
-#   filename = "fig_output/p_fox_F2H.pdf",
-#   plot = p_fox_F2H,
-#   base_height = 10,
-#   base_width = 10
-# )
+p_delF2H_w_wm
 ```
 
+## Calculate growth (CS)
+
 ```{r}
-p_fox_F2H_surface <- growth_data |> 
-  filter(experiment == "Fox, AK") |> 
-  filter(site == "Surface") |> 
-  filter(!is.na(site)) |>
+CS_growth_data_surface <- CS_irms_w_FID_surface |> 
+    filter(inc_time_d != 0) |>   # can't calculate growth where dt = 0
+  # calculate growth (u_d) and error in growth (u_d_se):
   mutate(
-    diff_F2H = case_when(
-      inc_time_d == 0 ~ 0,
-      inc_time_d > 0 ~ F2H - mean_F2H_t0
+    u_d = calculate_turnover(
+      a = 0.71,
+      FL = F2H_label,
+      FT = del_F2H,
+      F0 = 0,
+      t = inc_time_d
+    ),
+    u_d_se = calculate_sigma_mu(
+      a = 0.71,
+      t = inc_time_d,
+      F_L = F2H_label,
+      F_T = del_F2H,
+      F_0 = 0,
+      sa = 0,
+      sF_0 = t0_F2H_weighted_mean_se,
+      sF_L = 0,
+      sF_T = cal_F2H_se
     )
   ) |> 
-  ggplot() +
-  aes(
-    y = diff_F2H * 1e6,
-    x = inc_time_d,
-    shape = fraction,
-    group = compound
-  ) +
-  geom_point() +
-  geom_line() +
-  facet_grid(vars(fraction)) +
-  labs(
-    x = "Incubation Time (Days)",
-    y = latex2exp::TeX("$\\Delta^{2}F_{biomass}$  (ppm)"),
-    title = "Surface permafrost (10 cm depth)"
-  ) +
-  theme_bw()
-p_fox_F2H_surface
-
-# cowplot::save_plot(
-#   filename = "fig_output/p_fox_F2H_surface.pdf",
-#   plot = p_fox_F2H_surface,
-#   base_height = 4,
-#   base_width = 4
-# ) 
-```
-
-#### Growth rate (µ)
-
-```{r}
-p_fox_u_d_surface <- growth_data |> 
-  filter(experiment == "Fox, AK") |> 
-  filter(site == "Surface") |> 
-  filter(!is.na(site)) |> 
-  filter(inc_time_d !=0) |> 
-  filter(!is.na(u_d)) |> 
-  mutate(inc_time_d_str = factor(paste(inc_time_d, "days"), 
-                                 levels = c("7 days", "30 days")),
-         compound = forcats::fct_reorder(compound, n_C, .desc = TRUE)) |> 
-  ggplot() +
-  aes(
-    y = compound,
-    x = u_d
-  ) +
-  geom_segment(
-    aes(yend = compound),
-    xend = 0,
-  ) +
-  geom_point(aes(color = fraction, shape = fraction),
-             size = 3) +
-  scale_color_brewer(palette = "Set1")+
-  facet_wrap(vars(inc_time_d_str, fraction), scales = "free_x") +
-  coord_cartesian(expand = FALSE, ylim = c(0, 17), xlim = c(0, 0.023)) +
-  scale_x_continuous(
-    sec.axis = sec_axis(
-      trans = ~ log(2) / .,
-      breaks = c(1000, 360, 180, 120, 80, 60, 35),
-      name = "Generation Time (d)")
-  ) +
-  labs(
-    x = latex2exp::TeX("Biomass Growth Rate $(d ^{-1})$"),
-    y = "",
-    title = "Surface permafrost (10 cm depth)",
-    color = "Incubation Time",
-    shape = "Incubation Time"
-  ) +
-  ggprism::annotation_ticks() +
-  theme_classic() +
-  theme(
-    strip.background = element_rect(fill = "black", color = "black"),
-    strip.text = element_text(color = "white", face = "bold"),
-    panel.border = element_rect(color = "black", fill = NA),
-    panel.grid.major.y = element_line(color = "gray", linetype = "dotted"),
-    axis.text.x.top = element_text(angle = 45, hjust = 0),
-    axis.text.x.bottom = element_text(angle = 45, hjust = 1),
-    strip.placement = "outside",
-    strip.background.x = element_blank(),
-    strip.text.x = element_blank(),
-    aspect.ratio = 1,
-    axis.text = element_text(color = "black")
-  )
-p_fox_u_d_surface
-
-# cowplot::save_plot(
-#   filename = "fig_output/p_fox_u_d_surface.pdf",
-#   plot = p_fox_u_d_surface,
-#   base_height = 10,
-#   base_width = 10
-# )
-```
-
-```{r}
-p_fox_subsurface_u_d <- growth_data |> 
-  filter(experiment == "Fox, AK") |> 
-  filter(site != "Surface") |> 
-  filter(!is.na(site)) |> 
-  filter(inc_time_d == 7) |> # only look at 30 day incubations!
-  filter(!is.na(u_d)) |> 
-  mutate(inc_time_d_str = factor(paste(inc_time_d, "days"), 
-                                 levels = c("7 days", "30 days")),
-         compound = forcats::fct_reorder(compound, n_C, .desc = TRUE)) |> 
-  ggplot() +
-  aes(
-    x = u_d,
-    y = compound,
-    color = as.factor(inc_temp_C),
-    shape = fraction
-  ) +
-  geom_segment(
-    aes(yend = compound),
-    xend = 0,
-    color = "black"
-  ) +
-  geom_point() +
-  facet_grid(site~inc_temp_C) +
-  scale_color_viridis_d(option = "plasma", end = 0.7) +
-  scale_x_continuous(
-    sec.axis = sec_axis(
-      trans = ~ log(2) / .,
-      breaks = c(3650, 1200, 800, 600, 500, 365, 120),
-      name = "Generation Time (d)")
-  ) +
-  #coord_cartesian(xlim = c(0, 0.0008), ylim = c(0,13)) +
-  ggprism::annotation_ticks() +
-  labs(
-    x = latex2exp::TeX("Biomass Growth Rate $(d ^{-1})$"),
-    y = "", 
-    color = "Incubation Temperature (˚C)", shape = "Incubation Temperature (˚C)"
-  ) +
-  theme_classic() +
-  theme(
-    strip.background = element_rect(fill = "black", color = "black"),
-    strip.text = element_text(color = "white", face = "bold"),
-    panel.border = element_rect(color = "black", fill = NA),
-    panel.grid.major.y = element_line(color = "gray", linetype = "dotted"),
-    axis.text.x.top = element_text(angle = 45, hjust = 0),
-    axis.text.x.bottom = element_text(angle = 45, hjust = 1),
-    strip.placement = "outside",
-    strip.background.x = element_blank(),
-    strip.text.x = element_blank(),
-    aspect.ratio = 1,
-    axis.text = element_text(color = "black")
-  )
-p_fox_subsurface_u_d
-
-# cowplot::save_plot(
-#   filename = "fig_output/p_fox_subsurface_u_d.pdf",
-#   plot = p_fox_subsurface_u_d,
-#   base_width = 10,
-#   base_height = 10
-# )
-```
-
-### Growth vs. abundance
-
-Does lipid abundance correlate with its production rate?
-
-```{r}
-p_u_d_vs_abund <- growth_w_FID |> 
-  filter(site != "Surface") |> 
-  mutate(inc_temp_C_str = factor(paste(inc_temp_C, "˚C"), c("-4 ˚C", "4 ˚C", "12 ˚C"))) |> 
-  mutate(inc_time_d_str = factor(paste(inc_time_d, "days"), c("7 days", "30 days", "180 days"))) |> 
-  filter(inc_time_d != 0) |> 
-  ggplot(
-    aes(
-      x = mass_analyte_ng_per_g.FID,
-      y = u_d,
-      shape = site,
-      color = site,
-      label = compound
+  # Is it quantifiable? Let's say YES if growth > 0 and rel error > 0.5 (50%)
+  mutate(
+    rel_error = u_d_se/u_d,
+    detected = if_else(del_F2H - cal_F2H_se > t0_F2H_weighted_mean_se, TRUE, FALSE),
+    quantifiable = if_else(u_d > 0 & rel_error <= 1 & detected, TRUE, FALSE),
+    reason_for_exclusion = case_when(
+      quantifiable ~ "",
+      !quantifiable & u_d == 0 ~ "No isotopic enrichment observed",
+      !quantifiable & rel_error > 1 ~ "Relative error > 100%"
     )
-  ) +
-  geom_point(alpha = 1) +
-  scale_color_brewer(palette = "Set1") +
-  facet_grid(inc_time_d_str~inc_temp_C_str, scales = "free_y") +
-  labs(
-    x = "Lipid abundance (ng/g permafrost)",
-    y = latex2exp::TeX("Growth rate $(day^{-1})$"),
-    color = "Site",
-    shape = "Site"
-  ) +
-  ggprism::annotation_ticks(sides = "bl") +
-  theme_bw() +
-  theme(
-    axis.text = element_text(color = "black", face = "bold"),
-    strip.text = element_text(color = "white", face = "bold", size = 16),
-    strip.background = element_rect(color = "black", fill = "black"),
-    panel.grid = element_blank(),
-    aspect.ratio = 1,
-    axis.ticks = element_blank()
+  ) |> 
+  # calculate generation time
+  mutate(
+    # gen time = ln(2) / u_d
+    gen_d = log(2) / u_d,
+    turnover_d = 1 / u_d
+  ) |> 
+  # calculate mass turnover
+  mutate(
+    mean_mass_pg = abs_mass_analyte_total_ng_per_g * 1000,
+    mean_turnover_ng_d = abs_mass_analyte_total_ng_per_g * u_d,
+    mean_turnover_pg_d = mean_turnover_ng_d * 1000
+  ) |> 
+  # estimate number of cells
+  mutate(
+    mean_cells = mean_mass_pg / 0.003503333, # pg PLFA per cell
+    mean_cell_turnover_cell_d = mean_cells * u_d
   )
-p_u_d_vs_abund
-# 
-# cowplot::save_plot(
-#   filename = "fig_output/p_u_d_vs_abund.pdf",
-#   plot = p_u_d_vs_abund,
-#   base_height = 10,
-#   base_width = 10
-# )
-
-# ggsave(
-#   plot = p_u_d_vs_abund,
-#   filename = "fig_output/p_u_d_vs_abund.png",
-#   height = 10,
-#   width = 10
-# )
 ```
 
-```{r}
-p_surface_u_d_abund <- growth_w_FID |> 
-  filter(site == "Surface") |> 
-  mutate(inc_temp_C_str = factor(paste(inc_temp_C, "˚C"), c("-4 ˚C", "4 ˚C", "12 ˚C"))) |> 
-  mutate(inc_time_d_str = factor(paste(inc_time_d, "days"), c("7 days", "30 days", "180 days"))) |> 
-  ggplot(
-    aes(
-      x = mass_analyte_ng_per_g.FID,
-      y = u_d,
-      label = compound,
-      shape = inc_time_d_str,
-      color = inc_time_d_str
-    )
-  ) +
-  geom_point(alpha = 1) +
-  labs(
-    x = "Lipid abundance (ng/g permafrost)",
-    y = latex2exp::TeX("Growth rate $(day^{-1})$"),
-    color = "Site",
-    shape = "Site"
-  ) +
-  ggprism::annotation_ticks(sides = "bl") +
-  theme_bw() +
-  theme(
-    axis.text = element_text(color = "black", face = "bold"),
-    strip.text = element_text(color = "white", face = "bold", size = 16),
-    strip.background = element_rect(color = "black", fill = "black"),
-    panel.grid = element_blank(),
-    aspect.ratio = 1,
-    axis.ticks = element_blank()
-  )
-p_surface_u_d_abund
-
-# cowplot::save_plot(
-#   filename = "fig_output/p_surface_u_d_abund.pdf",
-#   plot = p_surface_u_d_abund,
-#   base_height = 4,
-#   base_width = 4
-# )
-```
-
-## JCR prelim
+## Calculate Growth (WM)
 
 ```{r}
-p_JCR_u_d <- growth_data |> 
-  filter(experiment == "JCR") |> 
-  mutate(compound = forcats::fct_reorder(compound, n_C, .desc = TRUE)) |> 
-  ggplot() +
-  aes(
-    x = u_d,
-    y = compound,
-    fill = Site,
-  ) +
-  geom_segment(
-    aes(
-      yend = compound,
-      xend = u_d
+WM_growth_data <- WM_irms_w_FID_surface |> 
+  left_join(label_dD, by = join_by(sample_id)) |> 
+  filter(inc_time_d != 0) |>   # can't calculate growth where dt = 0
+  # calculate growth (u_d) and error in growth (u_d_se):
+  mutate(
+    u_d = calculate_turnover(
+      a = 0.71,
+      FL = F2H_label,
+      FT = del_F2H_WM,
+      F0 = 0,
+      t = inc_time_d
     ),
-    xend = 0,
-    color = "black"
-  ) +
-  geom_point(
-    shape = 21,
-    color = "black",
-    size = 3
-  ) +
-  scale_fill_brewer(palette = "Set1") +
-  scale_x_continuous(
-    sec.axis = sec_axis(
-      trans = ~ log(2) / .,
-      breaks = c(10, 18, 30, 90, 1000),
-      name = "Generation Time (d)")
-  ) +
-  #coord_cartesian(expand = FALSE, xlim = c(0, 0.07), ylim = c(0, 17)) +
-  facet_wrap(vars(`Site`), ncol = 2) +
-  theme_bw() +
-  theme(
-    axis.text.x = element_text(angle = 90, hjust = 1),
-    panel.grid.minor = element_blank(),
-    panel.grid.major.x = element_blank(), 
-    panel.grid.major.y = element_line(linetype = "dotted", color = "gray"),
-    strip.background = element_rect(fill = "#8a1500", color = NA),
-    strip.text = element_text(color = "white", face = "bold"),
-    axis.text = element_text(color = "black"),
-    axis.text.x.bottom = element_text(angle = 45, hjust = 1),
-    axis.text.x.top = element_text(angle = 45, hjust = 0),
-    panel.spacing = unit(0.5, "cm"),
-    axis.text.y = element_text(size = 6)
-  ) +
-  labs(
-    x = latex2exp::TeX("Biomass Growth Rate $(d ^{-1})$"),
-    y = "",
-    caption = latex2exp::TeX("Secondary axis represents apparent biomass generation time, where $T_G = ln(2)/\\mu_d$")
+    u_d_se = calculate_sigma_mu(
+      a = 0.71,
+      t = inc_time_d,
+      F_L = F2H_label,
+      F_T = del_F2H_WM,
+      F_0 = 0,
+      sa = 0,
+      sF_0 = t0_F2H_weighted_mean_se,
+      sF_L = 0,
+      sF_T = cal_F2H_se_WM
+    )
+  ) |> 
+  # Is it quantifiable? Let's say YES if growth > 0 and rel error > 0.5 (50%)
+  mutate(
+    rel_error = u_d_se/u_d,
+    detected = if_else(del_F2H_WM - cal_F2H_se_WM > t0_F2H_weighted_mean_se, 
+                       TRUE, FALSE),
+    quantifiable = if_else(u_d > 0 & rel_error <= 1 & detected, TRUE, FALSE),
+    reason_for_exclusion = case_when(
+      quantifiable ~ "",
+      !quantifiable & u_d == 0 ~ "No isotopic enrichment observed",
+      !quantifiable & rel_error > 1 ~ "Relative error > 100%"
+    )
+  ) |> 
+  # calculate generation time
+  mutate(
+    # gen time = ln(2) / u_d
+    gen_d = log(2) / u_d,
+    turnover_d = 1 / u_d
+  ) |> 
+  # calculate mass turnover
+  mutate(
+    mean_mass_pg = mean_mass_ng * 1000,
+    mean_turnover_ng_d = mean_mass_ng * u_d,
+    mean_turnover_pg_d = mean_turnover_ng_d * 1000
+  ) |> 
+  # estimate number of cells
+  mutate(
+    mean_cells = mean_mass_pg / 0.003503333, # pg PLFA per cell
+    mean_cell_turnover_cell_d = mean_cells * u_d,
+    turnover_fraction = mean_cell_turnover_cell_d / mean_cells
   )
-p_JCR_u_d
+```
 
+### joined CS and MW
+
+```{r}
+growth_data_joined <- CS_growth_data_surface |> bind_rows(WM_growth_data)
+```
+
+### Plot growth
+
+```{r}
+growth_joined_for_plot <- growth_data_joined |> 
+  mutate(condition = 
+           fct_rev(paste0(fraction_str, " - ", inc_time_d, " day incubation"))) |> 
+  group_by(condition) |> 
+  mutate(
+    is_wm = case_when(
+      compound == "Weighted Mean" ~ TRUE, 
+      TRUE ~ FALSE)
+    )
+
+
+plot_u_d_surface <- function(fraction_choice, inc_time_choice) {
+  frac_color = ifelse(fraction_choice == "F3", "#ed926b", "#7dc0a6")
+  # fraction is either "F3" or "F2" (string)
+  # inc time choice is either 7 or 30 (numeric)
+  growth_joined_for_plot |> 
+  filter(
+    fraction == fraction_choice & inc_time_d == inc_time_choice) |> 
+  mutate(
+    compound = fct_reorder(compound, u_d)
+  ) |> 
+  ggplot(
+    aes(
+      x = u_d, y = compound, fill = is_wm,
+    )
+  ) +
+  geom_pointrange(
+    aes(
+      xmin = u_d - u_d_se, xmax = u_d + u_d_se,
+      shape = is_wm
+    ),
+  ) +
+  ggrepel::geom_text_repel(
+    data = function(df) df |> filter(compound == "Weighted Mean"),
+    aes(label = paste("Generation time:", round(gen_d), "days")),
+    nudge_x = 0.009, nudge_y = -0.5,
+    segment.color = "red", segment.curvature = -1e-20,
+    segment.alpha = 0.25
+  ) +
+  facet_wrap(vars(condition), scales = "free") +
+  coord_cartesian(xlim = c(0, 0.020)) +
+  scale_shape_manual(values = c(21, 22)) +
+  scale_fill_manual(values = c("black", frac_color)) +
+  guides(fill = FALSE) +
+  labs(
+    x = latex2exp::TeX("$\\mu \\; (d^{-1})$"), y = "",
+    shape = "Quantifiable"
+  ) +
+  theme_classic() +
+  theme(
+    strip.background = element_blank(),
+    legend.position = "None",
+    strip.text = element_text(color = "black", face = "bold", size = 12)
+  )
+}
+
+p_US_F3_7d <- plot_u_d_surface("F3", 7)
+p_US_F3_30d <- plot_u_d_surface("F3", 30)
+p_US_F2_7d <- plot_u_d_surface("F2", 7)
+p_US_F2_30d <- plot_u_d_surface("F2", 30)
+
+p_US_combined <- cowplot::plot_grid(
+  p_US_F2_7d, p_US_F2_30d,
+  p_US_F3_7d, p_US_F3_30d,
+  ncol = 2
+)
+p_US_combined
+p_delF2H_w_wm
+
+cowplot::save_plot(
+  plot = p_delF2H_w_wm, 
+  filename = "fig_output/Surface_delF2H.pdf",
+  base_height = 8,
+  base_width = 4
+)
+
+cowplot::save_plot(
+  filename = "fig_output/Surface_Growth_4Panel.pdf",
+  plot = p_US_combined,
+  base_height = 10,
+  base_width = 10
+)
+```
+
+### GT
+
+```{r}
+gt_surface_growth <- growth_data_joined |> 
+  filter(compound == "Weighted Mean") |> 
+  select(sample_id, site, fraction_str, inc_time_d, inc_temp_C, detected, quantifiable,
+         u_d, mean_mass_pg, mean_turnover_pg_d, mean_cells, 
+         mean_cell_turnover_cell_d, turnover_fraction) |> 
+    mutate(site = "Surface", inc_temp_C = 12) |> 
+  arrange(site, inc_temp_C, inc_time_d) |>
+  gt() |> 
+  cols_label(
+    site = "Core",
+    fraction_str = "Lipid Class",
+    inc_temp_C = "Incubation Temperature (C)",
+    u_d = "Growth Rate (days {{^-1}})",
+    inc_time_d = "Incubation Time (days)",
+    detected = "Growth Detected?",
+    quantifiable = "Growth Quantifiable?",
+    mean_turnover_pg_d = "PLFA turnover rate (pg/day)",
+    mean_mass_pg = "LFA Content (pg)",
+    mean_cells = "Cell density (cells/g)",
+    mean_cell_turnover_cell_d = "Cell turnover (cells/day)"
+  ) |> 
+  data_color(u_d, palette = "viridis") |> 
+  data_color(mean_turnover_pg_d, palette = "viridis") |> 
+  data_color(quantifiable, 
+              method = "factor",
+              palette = c("white", "#13ad3f")) |> 
+  data_color(detected, method = "factor", palette = c("white", "#13ad3f")) |> 
+  cols_hide(sample_id) |> 
+  fmt_scientific(u_d, decimals = 1) |> 
+  fmt_scientific(mean_mass_pg, decimals = 1) |> 
+  fmt_scientific(mean_turnover_pg_d, decimals = 1) |> 
+  fmt_scientific(columns = c(mean_cells, mean_cell_turnover_cell_d), decimals = 1) |>
+  fmt_scientific(columns = c(turnover_fraction), decimals = 1) |>
+  cols_align("center") |> 
+  tab_footnote(footnote = "Values exhibit high error if 'Growth Quantifiable' 
+               is FALSE, take values as approximations.",
+               locations = cells_column_labels(
+                 columns = c("u_d", "mean_turnover_pg_d", 
+                             "mean_cell_turnover_cell_d"))) |> 
+  tab_footnote(
+    footnote = "Reported per gram of permafrost.",
+    locations = cells_column_labels(columns = c("mean_mass_pg", "mean_turnover_pg_d",
+                                                "mean_cells"))
+  ) |> 
+  tab_footnote(
+    footnote = "Estimated using PLFA/cell conversion factors reported in reference #.",
+    locations = cells_column_labels(
+      columns = c("mean_cells", "mean_cell_turnover_cell_d"))
+  )
+gt_surface_growth
+
+gtsave(gt_surface_growth, "data_output/surface_growth_GT.html")
+gtsave(gt_surface_growth, "data_output/surface_growth_GT.png")
 ```
