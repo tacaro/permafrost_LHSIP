@@ -46,7 +46,7 @@ source("scripts/error_propagation.R")
 ```
 
 ```{r}
-message("using isoreader version ", packageVersion("isoprocessor"))
+message("using isoreader version ", packageVersion("isoreader"))
 message("using isoprocessor version ", packageVersion("isoprocessor"))
 ```
 
@@ -450,8 +450,9 @@ global_calibs_applied <-
   ) |>
   iso_apply_calibration(
     predict = true_d2H,
-    #calculate_error = TRUE
-    calculate_error = FALSE
+    calculate_error = TRUE,
+    predicted_error = "true_d2H_pred_se"
+    #calculate_error = FALSE
   )
 
 # ranges
@@ -613,7 +614,7 @@ analytes_peak_table_final <-
   mutate(
     has_mem_correct = ifelse(!is.na(cal_d2H_yes_mem), TRUE, FALSE),
     cal_d2H = ifelse(has_mem_correct, cal_d2H_yes_mem, cal_d2H_no_mem),
-    cal_d2H_se = ifelse(has_mem_correct, cal_d2H_yes_mem, cal_d2H_se_no_mem),
+    cal_d2H_se = ifelse(has_mem_correct, cal_d2H_se_yes_mem, cal_d2H_se_no_mem),
     area_range = ifelse(has_mem_correct, area_range_yes_mem, area_range_no_mem),
     d2H_range = ifelse(has_mem_correct, d2H_range_yes_mem, d2H_range_no_mem)
   ) |>
@@ -644,4 +645,24 @@ analytes_peak_table_final |>
   theme_bw()
 ```
 
+
+```{r}
+analytes_peak_table_final |> 
+  filter(area2 > 2) |> 
+  filter(cal_d2H >= -1000, cal_d2H <= 42000) |>
+  ggplot() +
+  aes(
+    x = area2,
+    y = cal_d2H,
+    color = area_range
+  ) +
+  geom_pointrange(
+    aes(ymin = cal_d2H - cal_d2H_se,
+        ymax = cal_d2H + cal_d2H_se),
+    shape = 1,
+  ) +
+  scale_x_continuous(breaks = seq(0, 80, by = 5)) +
+  facet_grid(standards ~ ., scales = "free_y") +
+  theme_bw()
+```
 
