@@ -1,3 +1,3 @@
-# permafrost_LHSIP
+# Caro et al. (submitted)
 
-Repository for Permafrost Lipid-SIP project
+
